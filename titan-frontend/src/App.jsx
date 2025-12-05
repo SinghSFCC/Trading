@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Search, Cpu, Activity, TrendingUp, BarChart2, Loader2, Target, ShieldAlert, Zap, TrendingDown, DollarSign, Clock, AlertCircle, X, Settings, LineChart, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Search, Cpu, Activity, TrendingUp, BarChart2, Loader2, Target, ShieldAlert, Zap, TrendingDown, DollarSign, Clock, AlertCircle, X, ChevronRight, ChevronLeft } from 'lucide-react';
 import TitanChart from './components/TitanChart';
 import TitanChat from './components/TitanChat';
 
@@ -14,15 +14,8 @@ export default function App() {
   const [showAudit, setShowAudit] = useState(false);
   const [timeframe, setTimeframe] = useState("1d");
   const [chartLoading, setChartLoading] = useState(false);
-  const [showIndicatorPanel, setShowIndicatorPanel] = useState(false);
   const [showRightSidebar, setShowRightSidebar] = useState(false);
   const [showLeftSidebar, setShowLeftSidebar] = useState(false);
-  
-  // Indicator configuration state
-  const [indicators, setIndicators] = useState({
-    ema50: false,
-    ema200: false,
-  });
 
   // Available timeframes
   const timeframes = [
@@ -37,47 +30,6 @@ export default function App() {
   ];
 
 
-  // Close indicator panel when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (showIndicatorPanel && !event.target.closest('.indicator-panel') && !event.target.closest('[title="Indicator Settings"]')) {
-        setShowIndicatorPanel(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showIndicatorPanel]);
-
-  // Fetch chart data when timeframe or stock changes
-  useEffect(() => {
-    if (selectedStock && selectedStock.symbol) {
-      fetchChartData(selectedStock.symbol, timeframe);
-    }
-  }, [timeframe]);
-
-  // Fetch chart data
-  const fetchChartData = async (symbol, interval) => {
-    if (!symbol) return;
-    
-    setChartLoading(true);
-    try {
-      const res = await axios.get(`http://127.0.0.1:8000/api/chart/${symbol}`, {
-        params: { interval }
-      });
-      
-      if (res.data && res.data.data) {
-        setSelectedStock(prev => ({
-          ...prev,
-          chart_data: res.data.data,
-          current_timeframe: interval
-        }));
-      }
-    } catch (error) {
-      console.error("Chart data fetch error:", error);
-    } finally {
-      setChartLoading(false);
-    }
-  };
 
   // Scan Engine
   const runScan = async () => {
@@ -103,6 +55,37 @@ export default function App() {
       setScanStatus("❌ Connection Error. Is Backend Running?");
     }
     setLoading(false);
+  };
+
+  // Fetch chart data when timeframe or stock changes
+  useEffect(() => {
+    if (selectedStock && selectedStock.symbol) {
+      fetchChartData(selectedStock.symbol, timeframe);
+    }
+  }, [timeframe, selectedStock?.symbol]);
+
+  // Fetch chart data from backend
+  const fetchChartData = async (symbol, interval) => {
+    if (!symbol) return;
+    
+    setChartLoading(true);
+    try {
+      const res = await axios.get(`http://127.0.0.1:8000/api/chart/${symbol}`, {
+        params: { interval }
+      });
+      
+      if (res.data && res.data.data) {
+        setSelectedStock(prev => ({
+          ...prev,
+          chart_data: res.data.data,
+          current_timeframe: interval
+        }));
+      }
+    } catch (error) {
+      console.error("Chart data fetch error:", error);
+    } finally {
+      setChartLoading(false);
+    }
   };
 
   // UI Handlers
@@ -328,21 +311,9 @@ export default function App() {
           
           {/* Right Side Controls */}
           <div className="flex items-center gap-3">
-            {/* Indicator Settings Button - Only when stock is selected */}
+            {/* Stock Controls - Only when stock is selected */}
             {selectedStock && (
               <>
-                <button
-                  onClick={() => setShowIndicatorPanel(!showIndicatorPanel)}
-                  className={`px-3 py-2 rounded text-xs font-bold uppercase tracking-wider flex items-center gap-2 border transition-all
-                    ${showIndicatorPanel 
-                      ? 'bg-[#00CCFF]/20 text-[#00CCFF] border-[#00CCFF]/40 hover:bg-[#00CCFF]/30' 
-                      : 'bg-[#1A1A1A] text-[#666] border-[#1A1A1A] hover:bg-[#2A2A2A]'}`}
-                  title="Indicator Settings"
-                >
-                  <Settings size={12} />
-                  INDICATORS
-                </button>
-                
                 {/* AI Audit Button */}
                 {aiVerdict && (
                   <button 
@@ -413,91 +384,16 @@ export default function App() {
                   {chartLoading ? (
                     <div className="flex items-center justify-center h-full">
                       <Loader2 className="animate-spin text-[#00CCFF]" size={24} />
-                      <span className="ml-2 text-[#888] text-sm">Loading {timeframes.find(tf => tf.value === timeframe)?.label || timeframe} chart...</span>
+                      <span className="ml-2 text-[#888] text-sm">Loading chart data...</span>
                     </div>
                   ) : (
                     <TitanChart 
-                      data={selectedStock.chart_data || []} 
+                      symbol={selectedStock.symbol}
                       interval={timeframe}
-                      indicators={indicators}
+                      data={selectedStock.chart_data || []}
                     />
                   )}
 
-                {/* Indicator Configuration Panel */}
-                {showIndicatorPanel && (
-                  <div 
-                    className="indicator-panel fixed z-40 bg-[#0A0A0A] border border-[#1A1A1A] rounded shadow-2xl min-w-[280px]"
-                    style={{
-                      top: '100px',
-                      right: '20px'
-                    }}
-                  >
-                    <div className="px-4 py-3 border-b border-[#1A1A1A] flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <LineChart size={16} className="text-[#00CCFF]" />
-                        <span className="text-sm font-bold text-[#E0E0E0]">Indicators</span>
-              </div>
-                      <button
-                        onClick={() => setShowIndicatorPanel(false)}
-                        className="text-[#666] hover:text-[#E0E0E0] transition-colors"
-                      >
-                        <X size={16} />
-              </button>
-            </div>
-
-                    <div className="p-3 space-y-2 max-h-[400px] overflow-y-auto">
-                      {/* EMA 50 */}
-                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-0.5 bg-[#00CCFF]"></div>
-                          <span className="text-xs text-[#E0E0E0]">EMA 50</span>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={indicators.ema50}
-                          onChange={(e) => setIndicators({...indicators, ema50: e.target.checked})}
-                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
-                        />
-                      </label>
-                      
-                      {/* EMA 200 */}
-                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-0.5 bg-[#FFAA00]"></div>
-                          <span className="text-xs text-[#E0E0E0]">EMA 200</span>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={indicators.ema200}
-                          onChange={(e) => setIndicators({...indicators, ema200: e.target.checked})}
-                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
-                        />
-                      </label>
-                    </div>
-                    
-                    {/* Quick Actions */}
-                    <div className="px-3 py-2 border-t border-[#1A1A1A] flex gap-2">
-                      <button
-                        onClick={() => setIndicators({
-                          ema50: true,
-                          ema200: true,
-                        })}
-                        className="flex-1 px-3 py-1.5 text-xs font-bold uppercase tracking-wider bg-[#003366] hover:bg-[#004488] text-[#00CCFF] border border-[#0066AA] rounded transition-all"
-                      >
-                        All On
-                      </button>
-                      <button
-                        onClick={() => setIndicators({
-                          ema50: false,
-                          ema200: false,
-                        })}
-                        className="flex-1 px-3 py-1.5 text-xs font-bold uppercase tracking-wider bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#666] border border-[#1A1A1A] rounded transition-all"
-                      >
-                        All Off
-                      </button>
-                    </div>
-                  </div>
-                )}
 
                 </div>
               </div>
