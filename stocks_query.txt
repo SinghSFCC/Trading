@@ -1,0 +1,75 @@
+// Titan Scraper PRO (Handles Pagination)
+// Console me paste karo aur Enter maaro
+
+async function getAllTitanStocks() {
+    console.clear();
+    console.log("🚀 Initializing Titan Scraper PRO...");
+
+    // 1. Total Pages Pata Karo
+    const pageInfo = document.querySelector('div[data-page-info]');
+    let totalPages = 1;
+
+    if (pageInfo) {
+        // Text example: "183 results found: Showing page 1 of 8"
+        const text = pageInfo.innerText;
+        const match = text.match(/page \d+ of (\d+)/);
+        if (match && match[1]) {
+            totalPages = parseInt(match[1]);
+        }
+    }
+
+    console.log(`📊 Total Pages Found: ${totalPages}`);
+    
+    let allStocks = [];
+    const baseUrl = window.location.href.split('?')[0]; // Clean URL
+    const queryParams = new URLSearchParams(window.location.search);
+
+    // 2. Loop Through All Pages
+    for (let i = 1; i <= totalPages; i++) {
+        console.log(`⏳ Fetching Data from Page ${i}/${totalPages}...`);
+        
+        // Update page number in URL params
+        queryParams.set('page', i);
+        const fetchUrl = `${baseUrl}?${queryParams.toString()}`;
+
+        try {
+            // Background Fetch (Magic happens here)
+            const response = await fetch(fetchUrl);
+            const htmlText = await response.text();
+            
+            // Parse HTML internally
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlText, 'text/html');
+            
+            // Extract Rows from that page
+            const rows = doc.querySelectorAll('table.data-table tbody tr');
+            
+            rows.forEach(row => {
+                const link = row.querySelector('a[href*="/company/"]');
+                if (link) {
+                    const href = link.getAttribute('href');
+                    const parts = href.split('/');
+                    if (parts.length > 2) {
+                        let symbol = parts[2];
+                        // Avoid duplicates if any
+                        if (!allStocks.includes(symbol + ".NS")) {
+                            allStocks.push(symbol + ".NS");
+                        }
+                    }
+                }
+            });
+
+        } catch (e) {
+            console.error(`❌ Error on Page ${i}:`, e);
+        }
+    }
+
+    // 3. Final Output
+    console.clear();
+    console.log(`✅ MISSION COMPLETE! Found ${allStocks.length} Stocks.`);
+    console.log("👇 COPY THE LIST BELOW FOR YOUR stocks.txt FILE 👇\n");
+    console.log(allStocks.join('\n'));
+}
+
+// Run the function
+getAllTitanStocks();

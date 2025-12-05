@@ -1,0 +1,18 @@
+STOCK                | PRICE      | RSI   | VOL SPIKE
+------------------------------------------------------------
+COFORGE.NS           | 1966.20    | 72    | 2.2x Avg
+TNIDETF.NS           | 99.69      | 66    | 1.5x Avg
+HEXT.NS              | 788.55     | 66    | 4.0x Avg
+JBCHEPHARM.NS        | 1821.70    | 65    | 2.0x Avg
+MANORAMA.NS          | 1370.60    | 55    | 2.0x Avg
+PERSISTENT.NS        | 6452.00    | 68    | 1.6x Avg
+SMCGLOBAL.NS         | 73.48      | 68    | 13.2x Avg
+VIJAYA.NS            | 1080.00    | 66    | 13.7x Avg
+CIGNITITEC.NS        | 1901.90    | 72    | 2.4x Avg
+HDFCQUAL.NS          | 60.43      | 64    | 1.7x Avg
+ELDEHSG.NS           | 951.00     | 68    | 16.8x Avg
+HDFCGROWTH.NS        | 129.84     | 69    | 3.5x Avg
+LTIM.NS              | 6266.00    | 72    | 1.6x Avg
+HINDCOPPER.NS        | 365.75     | 67    | 5.1x Avg
+HSCL.NS              | 462.35     | 57    | 3.3x Avg
+BLS.NS               | 331.55     | 56    | 1.5x Avg

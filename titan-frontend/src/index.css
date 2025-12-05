@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Professional Trading Terminal Styles */
+@layer utilities {
+  /* Custom Scrollbar - Terminal Style */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: #0A0A0A;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #1A1A1A;
+    border-radius: 3px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #2A2A2A;
+  }
+  
+  /* Terminal Font Rendering */
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  /* Selection Color */
+  ::selection {
+    background: #003366;
+    color: #00CCFF;
+  }
+}
