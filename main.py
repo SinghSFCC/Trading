@@ -7,6 +7,8 @@ import pandas_ta as ta
 import pandas as pd
 import time
 import random
+import numpy as np
+from scipy.signal import find_peaks
 # Import our new AI Agent
 from ai_agent import audit_stock
 import google.generativeai as genai
@@ -204,6 +206,87 @@ def check_titan_criteria(df):
         pass
     return "WAIT"
 
+def calculate_sr_levels(df):
+    """
+    Calculate support and resistance levels using scipy.signal.find_peaks
+    Returns: {"support": [float, ...], "resistance": [float, ...]}
+    """
+    try:
+        if df is None or len(df) < 50:
+            return {"support": [], "resistance": []}
+        
+        # Get price data
+        high_prices = df['High'].values
+        low_prices = df['Low'].values
+        close_prices = df['Close'].values
+        
+        # Calculate price range for prominence threshold (2% of price range)
+        price_range = np.max(close_prices) - np.min(close_prices)
+        prominence_threshold = price_range * 0.02  # 2% of price range
+        
+        # Minimum distance between peaks (20 data points)
+        min_distance = min(20, len(df) // 10)
+        
+        # Find resistance levels (peaks in High prices)
+        resistance_peaks, resistance_properties = find_peaks(
+            high_prices,
+            prominence=prominence_threshold,
+            distance=min_distance
+        )
+        
+        # Find support levels (peaks in inverted Low prices, then invert back)
+        # We invert because find_peaks finds maxima, so we invert to find minima
+        inverted_lows = -low_prices
+        support_peaks, support_properties = find_peaks(
+            inverted_lows,
+            prominence=prominence_threshold,
+            distance=min_distance
+        )
+        
+        # Extract resistance prices (from High)
+        resistance_levels = [float(high_prices[idx]) for idx in resistance_peaks]
+        
+        # Extract support prices (from Low)
+        support_levels = [float(low_prices[idx]) for idx in support_peaks]
+        
+        # Sort and limit to top 5 strongest levels (by prominence)
+        if len(resistance_levels) > 0:
+            # Get prominence values for resistance
+            resistance_prominences = resistance_properties.get('prominences', [])
+            # Sort by prominence (descending) and take top 5
+            if len(resistance_prominences) > 0:
+                sorted_resistance = sorted(
+                    zip(resistance_levels, resistance_prominences),
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+                resistance_levels = [level[0] for level in sorted_resistance[:5]]
+            else:
+                resistance_levels = sorted(resistance_levels, reverse=True)[:5]
+        
+        if len(support_levels) > 0:
+            # Get prominence values for support
+            support_prominences = support_properties.get('prominences', [])
+            # Sort by prominence (descending) and take top 5
+            if len(support_prominences) > 0:
+                sorted_support = sorted(
+                    zip(support_levels, support_prominences),
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+                support_levels = [level[0] for level in sorted_support[:5]]
+            else:
+                support_levels = sorted(support_levels)[:5]
+        
+        return {
+            "support": support_levels,
+            "resistance": resistance_levels
+        }
+        
+    except Exception as e:
+        print(f"⚠️ Support/Resistance calculation error: {str(e)[:100]}")
+        return {"support": [], "resistance": []}
+
 # --- API ENDPOINTS ---
 
 @app.get("/")
@@ -216,7 +299,20 @@ def scan_stock(symbol: str, interval: str = "1d"):
     df = fetch_stock_data(symbol, interval=interval)
     if df is None:
         raise HTTPException(status_code=404, detail="Data Not Found")
-    return {"status": "OK", "symbol": symbol, "interval": interval}
+    
+    # Calculate support/resistance levels
+    sr_levels = calculate_sr_levels(df)
+    
+    # Check if TradingView is supported (ends with .NS or .BO)
+    has_tradingview = symbol.endswith(".NS") or symbol.endswith(".BO")
+    
+    return {
+        "status": "OK",
+        "symbol": symbol,
+        "interval": interval,
+        "sr_levels": sr_levels,
+        "has_tradingview": has_tradingview
+    }
 
 @app.get("/api/audit/{symbol}")
 def get_ai_audit(symbol: str, interval: str = "1d"):
@@ -383,11 +479,19 @@ def get_chart_data(symbol: str, interval: str = "1d"):
         rsi_values = [d['rsi'] for d in chart_data if 'rsi' in d and 0 <= d['rsi'] <= 100]
         print(f"📊 RSI value range: {min(rsi_values):.2f} - {max(rsi_values):.2f}")
     
+    # Calculate support/resistance levels
+    sr_levels = calculate_sr_levels(df)
+    
+    # Check if TradingView is supported (ends with .NS or .BO)
+    has_tradingview = symbol.endswith(".NS") or symbol.endswith(".BO")
+    
     return {
         "symbol": symbol,
         "interval": interval,
         "data": chart_data,
-        "count": len(chart_data)
+        "count": len(chart_data),
+        "sr_levels": sr_levels,
+        "has_tradingview": has_tradingview
     }
 
 @app.get("/api/bulk_scan")
@@ -425,13 +529,21 @@ def bulk_scan():
                             for _, row in chart_df.iterrows()
                         ]
                         
+                        # Calculate support/resistance levels
+                        sr_levels = calculate_sr_levels(df)
+                        
+                        # Check if TradingView is supported (ends with .NS or .BO)
+                        has_tradingview = stock.endswith(".NS") or stock.endswith(".BO")
+                        
                         return {
                             "symbol": stock,
                             "current_price": round(df['Close'].iloc[-1], 2),
                             "rsi": round(df['RSI'].iloc[-1], 1),
                             "volume_x": round(df['Volume'].iloc[-1] / (df['Vol_SMA'].iloc[-1] + 1), 1),
                             "status": "💎 BUY",
-                            "chart_data": chart_data
+                            "chart_data": chart_data,
+                            "sr_levels": sr_levels,
+                            "has_tradingview": has_tradingview
                         }
             except Exception as e:
                 print(f"⚠️ Scan error for {stock}: {str(e)[:100]}")

@@ -16,6 +16,7 @@ export default function App() {
   const [chartLoading, setChartLoading] = useState(false);
   const [showRightSidebar, setShowRightSidebar] = useState(false);
   const [showLeftSidebar, setShowLeftSidebar] = useState(false);
+  const [viewMode, setViewMode] = useState('titan'); // Default to Titan view
 
   // Available timeframes
   const timeframes = [
@@ -57,6 +58,13 @@ export default function App() {
     setLoading(false);
   };
 
+  // Reset view mode when stock changes
+  useEffect(() => {
+    if (selectedStock) {
+      setViewMode('titan'); // Reset to default view when stock changes
+    }
+  }, [selectedStock]);
+
   // Fetch chart data when timeframe or stock changes
   useEffect(() => {
     if (selectedStock && selectedStock.symbol) {
@@ -78,7 +86,10 @@ export default function App() {
         setSelectedStock(prev => ({
           ...prev,
           chart_data: res.data.data,
-          current_timeframe: interval
+          current_timeframe: interval,
+          // Preserve or update sr_levels and has_tradingview from chart endpoint
+          sr_levels: res.data.sr_levels || prev?.sr_levels || { support: [], resistance: [] },
+          has_tradingview: res.data.has_tradingview !== undefined ? res.data.has_tradingview : (prev?.has_tradingview || false)
         }));
       }
     } catch (error) {
@@ -355,6 +366,17 @@ export default function App() {
                     ))}
                   </select>
                 </div>
+
+                {/* View Mode Toggle - Only show if TradingView is supported */}
+                {selectedStock?.has_tradingview && (
+                  <button
+                    onClick={() => setViewMode(viewMode === 'titan' ? 'tradingview' : 'titan')}
+                    className="px-3 py-2 rounded text-xs font-bold uppercase tracking-wider border transition-all bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] border-[#333]"
+                    title={viewMode === 'titan' ? 'Switch to TradingView' : 'Switch to Titan View'}
+                  >
+                    {viewMode === 'titan' ? 'Show TradingView' : 'Show Titan View'}
+                  </button>
+                )}
               </>
             )}
             
@@ -391,6 +413,8 @@ export default function App() {
                       symbol={selectedStock.symbol}
                       interval={timeframe}
                       data={selectedStock.chart_data || []}
+                      levels={selectedStock.sr_levels || { support: [], resistance: [] }}
+                      mode={viewMode}
                     />
                   )}
 

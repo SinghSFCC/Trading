@@ -1,27 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { AdvancedRealTimeChart } from 'react-ts-tradingview-widgets';
-import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
 import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
-export default function TitanChart({ symbol, interval = "1d", data = [] }) {
-  const [useTradingView, setUseTradingView] = useState(true);
-  const [tradingViewError, setTradingViewError] = useState(false);
+export default function TitanChart({ symbol, interval = "1d", data = [], levels = { support: [], resistance: [] }, mode = 'titan' }) {
   const chartContainerRef = useRef();
   const chartInstance = useRef(null);
-
-  // List of major stocks that typically work on TradingView
-  // For others, we'll use backend data with lightweight-charts
-  const tradingViewSupportedSymbols = [
-    'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'HINDUNILVR', 'ICICIBANK', 
-    'SBIN', 'BHARTIARTL', 'KOTAKBANK', 'ITC', 'LT', 'AXISBANK'
-  ];
-
-  // Check if symbol is likely to work on TradingView
-  const isTradingViewSupported = () => {
-    if (!symbol) return false;
-    const baseSymbol = symbol.replace('.NS', '').replace('.BO', '');
-    return tradingViewSupportedSymbols.includes(baseSymbol);
-  };
+  const candleSeriesRef = useRef(null);
+  const priceLinesRef = useRef([]);
 
   // Parse symbol from backend format to TradingView format
   const parseSymbol = (symbol) => {
@@ -55,10 +41,9 @@ export default function TitanChart({ symbol, interval = "1d", data = [] }) {
     return intervalMap[interval] || 'D';
   };
 
-  // Initialize lightweight-charts fallback
+  // Initialize lightweight-charts for Titan mode
   useEffect(() => {
-    // Only use lightweight-charts if we have data and TradingView failed or not supported
-    if (!useTradingView && data && data.length > 0 && chartContainerRef.current) {
+    if (mode === 'titan' && data && data.length > 0 && chartContainerRef.current) {
       // Clean up existing chart
       if (chartInstance.current) {
         try {
@@ -67,6 +52,7 @@ export default function TitanChart({ symbol, interval = "1d", data = [] }) {
           // Ignore cleanup errors
         }
         chartInstance.current = null;
+        candleSeriesRef.current = null;
       }
 
       const initializeChart = () => {
@@ -91,16 +77,16 @@ export default function TitanChart({ symbol, interval = "1d", data = [] }) {
             horzLines: { color: '#1A1A1A', style: 0 },
           },
           crosshair: {
-            mode: 1, // Normal crosshair mode for zoom/pan
+            mode: 1,
             vertLine: {
               color: '#666',
               width: 1,
-              style: 2, // Dashed line
+              style: 2,
             },
             horzLine: {
               color: '#666',
               width: 1,
-              style: 2, // Dashed line
+              style: 2,
             },
           },
           timeScale: {
@@ -121,26 +107,26 @@ export default function TitanChart({ symbol, interval = "1d", data = [] }) {
             entireTextOnly: false,
           },
           handleScroll: {
-            mouseWheel: true, // Enable mouse wheel scroll/zoom
-            pressedMouseMove: true, // Enable pan with mouse drag
-            horzTouchDrag: true, // Enable horizontal touch drag
-            vertTouchDrag: true, // Enable vertical touch drag
+            mouseWheel: true,
+            pressedMouseMove: true,
+            horzTouchDrag: true,
+            vertTouchDrag: true,
           },
           handleScale: {
             axisPressedMouseMove: {
-              time: true, // Enable time scale zoom with mouse drag
-              price: true, // Enable price scale zoom with mouse drag
+              time: true,
+              price: true,
             },
             axisDoubleClickReset: {
-              time: true, // Double click to reset time scale
-              price: true, // Double click to reset price scale
+              time: true,
+              price: true,
             },
             axisTouchDrag: {
-              time: true, // Enable touch drag for time scale
-              price: true, // Enable touch drag for price scale
+              time: true,
+              price: true,
             },
-            mouseWheel: true, // Enable mouse wheel for price scale zoom
-            pinch: true, // Enable pinch to zoom
+            mouseWheel: true,
+            pinch: true,
           },
         });
 
@@ -151,6 +137,8 @@ export default function TitanChart({ symbol, interval = "1d", data = [] }) {
           wickUpColor: '#00FF00',
           wickDownColor: '#FF4444',
         });
+
+        candleSeriesRef.current = candleSeries;
 
         // Process and set data
         const isIntraday = interval && ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"].includes(interval);
@@ -209,6 +197,51 @@ export default function TitanChart({ symbol, interval = "1d", data = [] }) {
         }
 
         chartInstance.current = chart;
+        candleSeriesRef.current = candleSeries;
+        
+        // Add support/resistance lines immediately after chart is created
+        if (levels && (levels.support?.length > 0 || levels.resistance?.length > 0)) {
+          // Add support lines (green)
+          if (levels.support && Array.isArray(levels.support)) {
+            levels.support.forEach(price => {
+              if (typeof price === 'number' && price > 0) {
+                try {
+                  const priceLine = candleSeries.createPriceLine({
+                    price: price,
+                    color: '#00FF00',
+                    lineWidth: 2,
+                    lineStyle: 2, // Dashed
+                    axisLabelVisible: true,
+                    title: `S: ${price.toFixed(2)}`,
+                  });
+                  priceLinesRef.current.push(priceLine);
+                } catch (e) {
+                  console.warn('Failed to create support line:', e);
+                }
+              }
+            });
+          }
+          // Add resistance lines (red)
+          if (levels.resistance && Array.isArray(levels.resistance)) {
+            levels.resistance.forEach(price => {
+              if (typeof price === 'number' && price > 0) {
+                try {
+                  const priceLine = candleSeries.createPriceLine({
+                    price: price,
+                    color: '#FF0000',
+                    lineWidth: 2,
+                    lineStyle: 2, // Dashed
+                    axisLabelVisible: true,
+                    title: `R: ${price.toFixed(2)}`,
+                  });
+                  priceLinesRef.current.push(priceLine);
+                } catch (e) {
+                  console.warn('Failed to create resistance line:', e);
+                }
+              }
+            });
+          }
+        }
 
         // Window resize handler
         const handleResize = () => {
@@ -242,19 +275,68 @@ export default function TitanChart({ symbol, interval = "1d", data = [] }) {
             // Ignore cleanup errors
           }
           chartInstance.current = null;
+          candleSeriesRef.current = null;
         }
       };
     }
-  }, [useTradingView, data, interval]);
+  }, [mode, data, interval]);
 
-  // Auto-switch to backend data for unsupported symbols
+  // Add support/resistance lines when levels change
   useEffect(() => {
-    if (data && data.length > 0 && !isTradingViewSupported() && useTradingView) {
-      // For symbols not in supported list, use backend data by default
-      setUseTradingView(false);
+    if (mode === 'titan' && candleSeriesRef.current && chartInstance.current) {
+      // Remove existing price lines first
+      priceLinesRef.current.forEach(line => {
+        try {
+          candleSeriesRef.current.removePriceLine(line);
+        } catch (e) {
+          // Ignore errors during cleanup
+        }
+      });
+      priceLinesRef.current = [];
+
+      // Add support lines (green)
+      if (levels.support && Array.isArray(levels.support)) {
+        levels.support.forEach(price => {
+          if (typeof price === 'number' && price > 0) {
+            try {
+              const priceLine = candleSeriesRef.current.createPriceLine({
+                price: price,
+                color: '#00FF00',
+                lineWidth: 2,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: true,
+                title: `S: ${price.toFixed(2)}`,
+              });
+              priceLinesRef.current.push(priceLine);
+            } catch (e) {
+              console.warn('Failed to create support line:', e);
+            }
+          }
+        });
+      }
+
+      // Add resistance lines (red)
+      if (levels.resistance && Array.isArray(levels.resistance)) {
+        levels.resistance.forEach(price => {
+          if (typeof price === 'number' && price > 0) {
+            try {
+              const priceLine = candleSeriesRef.current.createPriceLine({
+                price: price,
+                color: '#FF0000',
+                lineWidth: 2,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: true,
+                title: `R: ${price.toFixed(2)}`,
+              });
+              priceLinesRef.current.push(priceLine);
+            } catch (e) {
+              console.warn('Failed to create resistance line:', e);
+            }
+          }
+        });
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol]);
+  }, [mode, levels]);
 
   // Zoom functions for lightweight-charts
   const handleZoomIn = () => {
@@ -262,14 +344,12 @@ export default function TitanChart({ symbol, interval = "1d", data = [] }) {
       const timeScale = chartInstance.current.timeScale();
       const visibleRange = timeScale.getVisibleRange();
       if (visibleRange) {
-        // Convert to numbers for calculation (lightweight-charts returns Unix timestamps)
         const from = typeof visibleRange.from === 'number' ? visibleRange.from : new Date(visibleRange.from).getTime() / 1000;
         const to = typeof visibleRange.to === 'number' ? visibleRange.to : new Date(visibleRange.to).getTime() / 1000;
         const range = to - from;
-        const newRange = range * 0.7; // Zoom in by 30%
+        const newRange = range * 0.7;
         const center = (from + to) / 2;
         
-        // Set new range - lightweight-charts handles format conversion
         timeScale.setVisibleRange({
           from: center - newRange / 2,
           to: center + newRange / 2,
@@ -283,14 +363,12 @@ export default function TitanChart({ symbol, interval = "1d", data = [] }) {
       const timeScale = chartInstance.current.timeScale();
       const visibleRange = timeScale.getVisibleRange();
       if (visibleRange) {
-        // Convert to numbers for calculation
         const from = typeof visibleRange.from === 'number' ? visibleRange.from : new Date(visibleRange.from).getTime() / 1000;
         const to = typeof visibleRange.to === 'number' ? visibleRange.to : new Date(visibleRange.to).getTime() / 1000;
         const range = to - from;
-        const newRange = range * 1.4; // Zoom out by 40%
+        const newRange = range * 1.4;
         const center = (from + to) / 2;
         
-        // Set new range - lightweight-charts handles format conversion
         timeScale.setVisibleRange({
           from: center - newRange / 2,
           to: center + newRange / 2,
@@ -305,102 +383,79 @@ export default function TitanChart({ symbol, interval = "1d", data = [] }) {
     }
   };
 
-  const tradingViewSymbol = parseSymbol(symbol);
-  const shouldUseTradingView = useTradingView && !tradingViewError && isTradingViewSupported();
+  // Render based on mode
+  if (mode === 'tradingview') {
+    return (
+      <div className="w-full h-full min-h-[400px] relative">
+        <AdvancedRealTimeChart
+          symbol={parseSymbol(symbol)}
+          theme="dark"
+          autosize={true}
+          interval={mapInterval(interval)}
+          timezone="Asia/Kolkata"
+          style="1"
+          hide_side_toolbar={false}
+          details={true}
+          withdateranges={true}
+          allow_symbol_change={true}
+          studies={[
+            'RSI@tv-basicstudies',
+            'MASimple@tv-basicstudies',
+            'Volume@tv-basicstudies'
+          ]}
+          studies_overrides={{
+            'MASimple.length': 50
+          }}
+        />
+      </div>
+    );
+  }
 
+  // Titan mode (lightweight-charts with support/resistance)
   return (
-    <div className="w-full h-full min-h-[400px] relative">
-      {shouldUseTradingView ? (
+    <div className="w-full h-full min-h-[400px] relative flex flex-col">
+      {data && data.length > 0 ? (
         <>
-          <AdvancedRealTimeChart
-            symbol={tradingViewSymbol}
-            theme="dark"
-            autosize={true}
-            interval={mapInterval(interval)}
-            timezone="Asia/Kolkata"
-            style="1"
-            hide_side_toolbar={false}
-            details={true}
-            withdateranges={true}
-            allow_symbol_change={true}
-            studies={[
-              'RSI@tv-basicstudies',
-              'MASimple@tv-basicstudies',
-              'Volume@tv-basicstudies'
-            ]}
-            studies_overrides={{
-              'MASimple.length': 50
-            }}
-          />
-          {/* Fallback button if TradingView fails */}
-          {data && data.length > 0 && (
-            <button
-              onClick={() => {
-                setUseTradingView(false);
-                setTradingViewError(true);
-              }}
-              className="absolute top-2 right-2 px-3 py-1.5 bg-[#003366] hover:bg-[#004488] text-[#00CCFF] text-xs font-bold rounded border border-[#0066AA] z-50"
-              title="Switch to backend chart (if TradingView shows error)"
-            >
-              Use Backend Data
-            </button>
-          )}
+          <div ref={chartContainerRef} className="w-full flex-1 min-h-[400px]" style={{ paddingBottom: '48px' }} />
+          
+          {/* Zoom Controls - Bottom Bar (TradingView Style) */}
+          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-4 py-2 bg-[#0A0A0A] border-t border-[#1A1A1A] z-50">
+            {/* Left Side - Empty for now, can add controls later */}
+            <div></div>
+            
+            {/* Right Side - Zoom Controls */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleZoomIn}
+                className="p-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] rounded transition-colors flex items-center justify-center"
+                title="Zoom In (+)"
+              >
+                <ZoomIn size={18} />
+              </button>
+              <button
+                onClick={handleZoomOut}
+                className="p-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] rounded transition-colors flex items-center justify-center"
+                title="Zoom Out (-)"
+              >
+                <ZoomOut size={18} />
+              </button>
+              <button
+                onClick={handleResetZoom}
+                className="p-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] rounded transition-colors flex items-center justify-center"
+                title="Reset Zoom (Fit Content)"
+              >
+                <RotateCcw size={18} />
+              </button>
+            </div>
+          </div>
         </>
       ) : (
-        <>
-          {data && data.length > 0 ? (
-            <>
-              <div ref={chartContainerRef} className="w-full flex-1 min-h-[400px]" style={{ paddingBottom: '48px' }} />
-              
-              {/* Zoom Controls - Bottom Bar (TradingView Style) */}
-              <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-4 py-2 bg-[#0A0A0A] border-t border-[#1A1A1A] z-50">
-                {/* Left Side - TradingView Button */}
-                <button
-                  onClick={() => {
-                    setUseTradingView(true);
-                    setTradingViewError(false);
-                  }}
-                  className="px-3 py-1.5 bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] text-xs font-bold rounded border border-[#333] transition-colors"
-                  title="Try TradingView"
-                >
-                  TradingView
-                </button>
-                
-                {/* Right Side - Zoom Controls */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleZoomIn}
-                    className="p-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] rounded transition-colors flex items-center justify-center"
-                    title="Zoom In (+)"
-                  >
-                    <ZoomIn size={18} />
-                  </button>
-                  <button
-                    onClick={handleZoomOut}
-                    className="p-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] rounded transition-colors flex items-center justify-center"
-                    title="Zoom Out (-)"
-                  >
-                    <ZoomOut size={18} />
-                  </button>
-                  <button
-                    onClick={handleResetZoom}
-                    className="p-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] rounded transition-colors flex items-center justify-center"
-                    title="Reset Zoom (Fit Content)"
-                  >
-                    <RotateCcw size={18} />
-                  </button>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center justify-center h-full text-[#888]">
-              <div className="text-center">
-                <p className="text-sm mb-2">Chart data loading...</p>
-                <p className="text-xs text-[#666]">TradingView not available for this symbol</p>
-              </div>
-            </div>
-          )}
-        </>
+        <div className="flex items-center justify-center h-full text-[#888]">
+          <div className="text-center">
+            <p className="text-sm mb-2">Chart data loading...</p>
+            <p className="text-xs text-[#666]">Waiting for data...</p>
+          </div>
+        </div>
       )}
     </div>
   );
