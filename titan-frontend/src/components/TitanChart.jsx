@@ -7,28 +7,45 @@ export default function TitanChart({ data, interval = "1d", indicators = {
 } }) {
     const chartContainerRef = useRef();
     const chartInstance = useRef(null);
+    const resizeCleanupRef = useRef(null);
 
     useEffect(() => {
-        // 1. Container Check
         if (!chartContainerRef.current) return;
 
-        // 2. Safai: Purana chart hatao (with error handling)
+        // Clean up existing chart instance
         if (chartInstance.current) {
             try {
                 chartInstance.current.remove();
             } catch (e) {
                 // Chart might already be disposed, ignore error
-                console.log("Chart cleanup:", e.message);
             }
             chartInstance.current = null;
         }
 
-        // 3. Chart Initialize (v5 API)
-        const container = chartContainerRef.current;
-        const width = container.clientWidth || container.offsetWidth || 800;
-        const height = container.clientHeight || container.offsetHeight || 400;
+        // Wait for container to have final size (handles sidebar collapse/expand timing)
+        const initializeChart = () => {
+            const container = chartContainerRef.current;
+            if (!container) return;
+            
+            const width = container.clientWidth || container.offsetWidth || container.getBoundingClientRect().width || 800;
+            const height = container.clientHeight || container.offsetHeight || container.getBoundingClientRect().height || 400;
+            
+            // Ensure we have valid dimensions
+            if (width <= 0 || height <= 0) {
+                setTimeout(initializeChart, 50);
+                return;
+            }
+            
+            createChartInstance(container, width, height);
+        };
         
-        const chart = createChart(container, {
+        // Use requestAnimationFrame to ensure layout is complete
+        requestAnimationFrame(() => {
+            setTimeout(initializeChart, 0);
+        });
+        
+        const createChartInstance = (container) => {
+            const chart = createChart(container, {
             layout: {
                 background: { type: ColorType.Solid, color: '#000000' },
                 textColor: '#888888',
@@ -37,11 +54,10 @@ export default function TitanChart({ data, interval = "1d", indicators = {
                 vertLines: { color: '#1A1A1A', style: 0 },
                 horzLines: { color: '#1A1A1A', style: 0 },
             },
-            width: width,
-            height: height,
+            // Remove explicit width/height - chart will auto-size to container
             timeScale: {
                 timeVisible: true,
-                secondsVisible: false, // Will be set dynamically based on interval
+                secondsVisible: false,
                 borderColor: '#1A1A1A',
             },
             rightPriceScale: {
@@ -53,15 +69,12 @@ export default function TitanChart({ data, interval = "1d", indicators = {
             },
         });
 
-        // Save Instance
-        chartInstance.current = chart;
-
-        // 4. Series Add Karo (v5 API: use addSeries with CandlestickSeries)
+        // Create chart series
         let candleSeries, ema50Series, ema200Series;
         
         try {
             if (typeof chart.addSeries !== 'function') {
-                console.error('❌ addSeries is not a function');
+                console.error('Chart addSeries is not a function');
                 return;
             }
             
@@ -73,7 +86,6 @@ export default function TitanChart({ data, interval = "1d", indicators = {
                 wickUpColor: '#00FF00',
                 wickDownColor: '#FF4444',
             });
-            console.log("✅ Candle series created successfully");
             
             // EMA 50 line (conditional)
             if (indicators.ema50) {
@@ -97,43 +109,27 @@ export default function TitanChart({ data, interval = "1d", indicators = {
             
             
         } catch (e) {
-            console.error("❌ Series Error:", e);
+            console.error("Chart series creation error:", e);
             return;
         }
         
-        // Early return if series creation failed
         if (!candleSeries) {
-            console.error("❌ Failed to create candle series");
+            console.error("Failed to create candle series");
             return;
         }
 
-        // 5. Data Set Karo
+        // Set chart data
         if (data && data.length > 0 && candleSeries) {
             try {
-                console.log("📊 Chart Data Received:", data.length, "points");
-                console.log("📊 First data point:", data[0]);
-                console.log("📊 Interval:", interval);
-                
-                // Check if this is intraday data based on interval
                 const isIntraday = interval && ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"].includes(interval);
-                console.log("📊 Is Intraday:", isIntraday);
                 
                 // Configure timeScale based on interval
-                if (isIntraday) {
-                    // For intraday data, show hours and minutes
-                    chart.timeScale().applyOptions({
-                        timeVisible: true,
-                        secondsVisible: false, // Show HH:MM but not seconds
-                    });
-                } else {
-                    // For daily/weekly/monthly, just show dates
-                    chart.timeScale().applyOptions({
-                        timeVisible: true,
-                        secondsVisible: false,
-                    });
-                }
+                chart.timeScale().applyOptions({
+                    timeVisible: true,
+                    secondsVisible: false,
+                });
                 
-                // Data ko format aur sort karo
+                // Format and sort data
                 const cleanData = data
                     .map(d => {
                         // Ensure all values are numbers
@@ -144,67 +140,54 @@ export default function TitanChart({ data, interval = "1d", indicators = {
                         
                         // Validate data
                         if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close)) {
-                            console.warn("Invalid data point:", d);
                             return null;
                         }
                         
-                        // Handle time format: can be Unix timestamp (number) or string
+                        // Handle time format
                         let timeValue = d.time;
                         if (isIntraday) {
                             // For intraday, time should be Unix timestamp (number)
                             if (typeof timeValue === 'string') {
-                                // Convert string to timestamp if needed
                                 const date = new Date(timeValue);
                                 if (isNaN(date.getTime())) {
-                                    console.warn("Invalid date string:", timeValue);
                                     return null;
                                 }
                                 timeValue = Math.floor(date.getTime() / 1000);
                             } else if (typeof timeValue === 'number') {
-                                // Already a timestamp, validate it
                                 if (timeValue <= 0 || isNaN(timeValue)) {
-                                    console.warn("Invalid timestamp:", timeValue, "| Original:", d.time);
                                     return null;
                                 }
-                                // Use as is
                             } else {
-                                console.warn("Unexpected time type:", typeof timeValue, timeValue);
                                 return null;
                             }
                             
                             // Final validation for intraday timestamps
                             if (timeValue <= 0 || timeValue > 2147483647) {
-                                console.warn("Timestamp out of range:", timeValue);
                                 return null;
                             }
                         } else {
                             // For daily/weekly/monthly, time is string format
                             if (typeof timeValue === 'number') {
-                                // Convert timestamp to date string
                                 if (timeValue <= 0 || isNaN(timeValue)) {
-                                    console.warn("Invalid timestamp for daily data:", timeValue);
                                     return null;
                                 }
                                 const date = new Date(timeValue * 1000);
                                 if (isNaN(date.getTime())) {
-                                    console.warn("Invalid date from timestamp:", timeValue);
                                     return null;
                                 }
-                                timeValue = date.toISOString().split('T')[0]; // 'YYYY-MM-DD'
+                                timeValue = date.toISOString().split('T')[0];
                             } else if (typeof timeValue !== 'string') {
-                                console.warn("Unexpected time type for daily:", typeof timeValue, timeValue);
                                 return null;
                             }
                         }
                         
                         const dataPoint = {
-                            time: timeValue, // Unix timestamp (number) for intraday, string for daily
+                            time: timeValue,
                             open: open,
                             high: high,
                             low: low,
                             close: close,
                         };
-                        
                         
                         // Add EMA values
                         if (d.ema_50 !== undefined && !isNaN(Number(d.ema_50))) {
@@ -217,32 +200,17 @@ export default function TitanChart({ data, interval = "1d", indicators = {
                         
                         return dataPoint;
                     })
-                    .filter(d => d !== null) // Remove invalid entries
+                    .filter(d => d !== null)
                     .sort((a, b) => {
-                        // Sort by time
                         if (isIntraday) {
-                            // Both are numbers (timestamps)
                             return a.time - b.time;
                         } else {
-                            // Both are strings (dates)
                             return new Date(a.time) - new Date(b.time);
                         }
                     })
-                    // Duplicates hatao
                     .filter((item, index, self) => 
                         index === self.findIndex((t) => t.time === item.time)
                     );
-
-                console.log("✅ Clean Data Points:", cleanData.length, "| Intraday:", isIntraday);
-                if (cleanData.length > 0) {
-                    console.log("📊 First clean data point time:", cleanData[0].time, "| Type:", typeof cleanData[0].time);
-                    console.log("📊 Last clean data point time:", cleanData[cleanData.length - 1].time, "| Type:", typeof cleanData[cleanData.length - 1].time);
-                    
-                    // Debug: Count valid indicator values
-                    const ema50Count = cleanData.filter(d => d.ema_50 !== undefined && !isNaN(d.ema_50)).length;
-                    const ema200Count = cleanData.filter(d => d.ema_200 !== undefined && !isNaN(d.ema_200)).length;
-                    console.log(`📊 Valid indicator counts - EMA50: ${ema50Count}, EMA200: ${ema200Count}`);
-                }
                 
                 if (cleanData.length > 0) {
                     // Set candlestick data
@@ -268,45 +236,121 @@ export default function TitanChart({ data, interval = "1d", indicators = {
                     }
                     
                     
-                    chart.timeScale().fitContent(); // Zoom to fit
-                    console.log("📈 Chart data set successfully with indicators");
+                    chart.timeScale().fitContent();
                 } else {
-                    console.warn("⚠️ No valid data points after cleaning");
+                    console.warn("No valid data points after cleaning");
                 }
             } catch (err) {
-                console.error("❌ Chart Data Error:", err);
+                console.error("Chart data error:", err);
             }
         } else {
             if (!data || data.length === 0) {
-                console.warn("⚠️ No chart data provided");
+                console.warn("No chart data provided");
             }
             if (!candleSeries) {
-                console.warn("⚠️ Candle series not created");
+                console.warn("Candle series not created");
             }
         }
+        
+        // Store chart reference
+        chartInstance.current = chart;
+        };
 
-        // 6. Resize Handler
-        const handleResize = () => {
-            if (chartContainerRef.current) {
-                chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+        // Set up ResizeObserver after chart is created
+        let resizeObserver = null;
+        if (chartContainerRef.current && typeof ResizeObserver !== 'undefined') {
+            resizeObserver = new ResizeObserver(() => {
+                requestAnimationFrame(() => {
+                    if (!chartContainerRef.current || !chartInstance.current) return;
+                    
+                    const width = chartContainerRef.current.clientWidth || chartContainerRef.current.offsetWidth;
+                    const height = chartContainerRef.current.clientHeight || chartContainerRef.current.offsetHeight;
+                    
+                    if (chartInstance.current && width > 0 && height > 0) {
+                        try {
+                            chartInstance.current.applyOptions({ 
+                                width: width,
+                                height: height
+                            });
+                        } catch (error) {
+                            console.error('Chart resize error:', error);
+                        }
+                    }
+                });
+            });
+            resizeObserver.observe(chartContainerRef.current);
+        }
+
+        // Window resize handler
+        const handleWindowResize = () => {
+            if (chartContainerRef.current && chartInstance.current) {
+                const newWidth = chartContainerRef.current.clientWidth;
+                const newHeight = chartContainerRef.current.clientHeight;
+                if (newWidth > 0 && newHeight > 0) {
+                    chartInstance.current.applyOptions({ 
+                        width: newWidth,
+                        height: newHeight
+                    });
+                }
             }
         };
-        window.addEventListener('resize', handleResize);
+        window.addEventListener('resize', handleWindowResize);
+        
+        // Store cleanup function for resize handlers
+        resizeCleanupRef.current = () => {
+            window.removeEventListener('resize', handleWindowResize);
+            if (resizeObserver && chartContainerRef.current) {
+                resizeObserver.unobserve(chartContainerRef.current);
+                resizeObserver.disconnect();
+            }
+        };
 
-        // Cleanup
+        // Cleanup for the entire effect
         return () => {
-            window.removeEventListener('resize', handleResize);
+            // Clean up resize handlers if they were set up
+            if (resizeCleanupRef.current) {
+                resizeCleanupRef.current();
+                resizeCleanupRef.current = null;
+            }
             if (chartInstance.current) {
                 try {
                     chartInstance.current.remove();
                 } catch (e) {
                     // Chart might already be disposed, ignore error
-                    console.log("Chart cleanup:", e.message);
                 }
                 chartInstance.current = null;
             }
         };
     }, [data, interval, indicators]);
 
-    return <div ref={chartContainerRef} className="w-full h-full min-h-[400px]" />;
+    // Manual resize trigger - catches any missed resize events
+    useEffect(() => {
+        const forceResize = () => {
+            if (chartContainerRef.current && chartInstance.current) {
+                const width = chartContainerRef.current.clientWidth || chartContainerRef.current.offsetWidth;
+                const height = chartContainerRef.current.clientHeight || chartContainerRef.current.offsetHeight;
+                
+                if (width > 0 && height > 0) {
+                    try {
+                        chartInstance.current.applyOptions({ 
+                            width: width,
+                            height: height
+                        });
+                    } catch (error) {
+                        console.error('Force resize error:', error);
+                    }
+                }
+            }
+        };
+
+        const timeoutId = setTimeout(forceResize, 600);
+        const resizeInterval = setInterval(forceResize, 200);
+
+        return () => {
+            clearTimeout(timeoutId);
+            clearInterval(resizeInterval);
+        };
+    }, [data]);
+
+    return <div ref={chartContainerRef} className="w-full h-full min-h-[400px]" style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0 }} />;
 }

@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor
 import yfinance as yf
 import pandas_ta as ta
@@ -8,6 +9,13 @@ import time
 import random
 # Import our new AI Agent
 from ai_agent import audit_stock
+import google.generativeai as genai
+import os
+
+# Pydantic Model for Chat Request
+class ChatRequest(BaseModel):
+    symbol: str
+    question: str
 
 app = FastAPI(title="Titan Command Center API")
 
@@ -440,3 +448,83 @@ def bulk_scan():
         return {"error": str(e)}
         
     return {"gems": results}
+
+@app.post("/api/chat")
+def chat_with_stock(request: ChatRequest):
+    """
+    Contextual chat endpoint that answers questions about a stock using live technical data.
+    """
+    try:
+        # Fetch stock data
+        df = fetch_stock_data(request.symbol, interval="1d")
+        
+        if df is None or df.empty:
+            return {"reply": f"❌ Unable to fetch data for {request.symbol}. Please check the symbol and try again."}
+        
+        # Extract latest technical data
+        last_row = df.iloc[-1]
+        current_price = float(last_row['Close'])
+        
+        # Get indicators with null checks
+        rsi = None
+        if 'RSI' in df.columns and not pd.isna(last_row['RSI']):
+            rsi = round(float(last_row['RSI']), 2)
+        
+        ema50 = None
+        if 'EMA_50' in df.columns and not pd.isna(last_row['EMA_50']):
+            ema50 = round(float(last_row['EMA_50']), 2)
+        
+        ema200 = None
+        if 'EMA_200' in df.columns and not pd.isna(last_row['EMA_200']):
+            ema200 = round(float(last_row['EMA_200']), 2)
+        
+        volume_spike = None
+        if 'Volume' in df.columns and 'Vol_SMA' in df.columns:
+            vol = float(last_row['Volume'])
+            vol_sma = float(last_row['Vol_SMA'])
+            if not pd.isna(vol) and not pd.isna(vol_sma) and vol_sma > 0:
+                volume_spike = round(vol / vol_sma, 2)
+        
+        # Determine trend
+        trend = "Bullish"
+        if ema50 is not None:
+            trend = "Bullish" if current_price > ema50 else "Bearish"
+        
+        # Construct prompt
+        data_summary = f"Current Price: ₹{current_price:.2f}"
+        if rsi is not None:
+            data_summary += f"\n- RSI (14): {rsi}"
+        if ema50 is not None:
+            data_summary += f"\n- EMA 50: ₹{ema50:.2f}"
+        if ema200 is not None:
+            data_summary += f"\n- EMA 200: ₹{ema200:.2f}"
+        if volume_spike is not None:
+            data_summary += f"\n- Volume Spike: {volume_spike}x average"
+        data_summary += f"\n- Trend: {trend}"
+        
+        prompt = f"""You are a Trading Assistant. Here is the live data for {request.symbol}:
+{data_summary}
+
+User Question: {request.question}
+
+Answer specifically using this data. Be concise, professional, and focus on actionable insights based on the technical indicators provided."""
+        
+        # Check if API key is configured
+        gemini_api_key = os.getenv('GEMINI_API_KEY')
+        if not gemini_api_key:
+            return {"reply": "❌ AI service is not configured. Please set GEMINI_API_KEY in .env file."}
+        
+        # Generate response using Gemini
+        try:
+            genai.configure(api_key=gemini_api_key)
+            model = genai.GenerativeModel('gemini-2.0-flash')
+            response = model.generate_content(prompt)
+            
+            reply = response.text.strip()
+            return {"reply": reply}
+            
+        except Exception as e:
+            return {"reply": f"❌ Error generating AI response: {str(e)}"}
+            
+    except Exception as e:
+        return {"reply": f"❌ Error processing request: {str(e)}"}
