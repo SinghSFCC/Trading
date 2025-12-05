@@ -1,16 +1,72 @@
 import google.generativeai as genai
 import json
 import os
+from dotenv import load_dotenv
 
-# --- CONFIGURATION ---
-# Aapki API Key (Jo aapne file me di thi)
-GEMINI_API_KEY = "AIzaSyBpiNqjZFl_6TE2RWgEy_UubLQ8qIBlD5k" 
-genai.configure(api_key=GEMINI_API_KEY)
+# Load environment variables from .env file
+# Handle encoding errors gracefully
+from pathlib import Path
+
+# Get the directory where this script is located
+script_dir = Path(__file__).parent
+env_path = script_dir / '.env'
+
+# Read .env file directly (most reliable method)
+GEMINI_API_KEY = None
+if env_path.exists():
+    try:
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    os.environ[key] = value
+                    if key == 'GEMINI_API_KEY':
+                        GEMINI_API_KEY = value
+        if GEMINI_API_KEY:
+            print(f"✅ Successfully loaded GEMINI_API_KEY from .env file (length: {len(GEMINI_API_KEY)})")
+        else:
+            print(f"⚠️ .env file exists but GEMINI_API_KEY not found in it")
+    except Exception as e:
+        print(f"❌ Failed to read .env file: {e}")
+else:
+    print(f"⚠️ .env file not found at: {env_path}")
+    # Try load_dotenv as fallback
+    try:
+        load_dotenv(override=True)
+        GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+        if GEMINI_API_KEY:
+            print(f"✅ Loaded GEMINI_API_KEY via load_dotenv")
+    except Exception as e:
+        print(f"⚠️ load_dotenv also failed: {e}")
+
+# Final check - get from environment if still not set
+if not GEMINI_API_KEY:
+    GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+
+if not GEMINI_API_KEY:
+    print("⚠️ WARNING: GEMINI_API_KEY not found in environment variables!")
+    print("⚠️ Please create a .env file with: GEMINI_API_KEY=your_api_key_here")
+    print("⚠️ AI features will not work until API key is configured.")
+else:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 def audit_stock(symbol, price, rsi, volume_x, recent_trend):
     """
     Sends stock data to Gemini 2.0 Flash for a Swing Trading Audit.
     """
+    # Check if API key is configured
+    if not GEMINI_API_KEY:
+        print(f"⚠️ AI AGENT: API key not configured. Skipping analysis for {symbol}...")
+        return {
+            "verdict": "ERROR",
+            "reason": "API key not configured. Please set GEMINI_API_KEY in .env file.",
+            "stopLoss": 0,
+            "target": 0
+        }
+    
     print(f"\n🤖 AI AGENT ACTIVE: Analyzing {symbol}...")
     
     # Using the latest fast model available to your key

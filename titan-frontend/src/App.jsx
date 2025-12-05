@@ -15,14 +15,10 @@ export default function App() {
   const [chartLoading, setChartLoading] = useState(false);
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false);
   
-  // Indicator configuration state
+  // Indicator configuration state - Only EMA indicators, all off by default
   const [indicators, setIndicators] = useState({
-    ema50: true,
-    ema200: true,
-    rsi: true,
-    volume: true,
-    macd: false,
-    bollinger: false,
+    ema50: false,
+    ema200: false,
   });
 
   // Available timeframes
@@ -437,62 +433,6 @@ export default function App() {
                           className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
                         />
                       </label>
-                      
-                      {/* RSI */}
-                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-0.5 bg-[#FFAA00]"></div>
-                          <span className="text-xs text-[#E0E0E0]">RSI (14)</span>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={indicators.rsi}
-                          onChange={(e) => setIndicators({...indicators, rsi: e.target.checked})}
-                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
-                        />
-                      </label>
-                      
-                      {/* Volume */}
-                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
-                        <div className="flex items-center gap-2">
-                          <BarChart2 size={12} className="text-[#00CCFF]" />
-                          <span className="text-xs text-[#E0E0E0]">Volume</span>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={indicators.volume}
-                          onChange={(e) => setIndicators({...indicators, volume: e.target.checked})}
-                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
-                        />
-                      </label>
-                      
-                      {/* MACD */}
-                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-0.5 bg-[#00FF00]"></div>
-                          <span className="text-xs text-[#E0E0E0]">MACD</span>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={indicators.macd}
-                          onChange={(e) => setIndicators({...indicators, macd: e.target.checked})}
-                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
-                        />
-                      </label>
-                      
-                      {/* Bollinger Bands */}
-                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-0.5 bg-[#666666]"></div>
-                          <span className="text-xs text-[#E0E0E0]">Bollinger Bands</span>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={indicators.bollinger}
-                          onChange={(e) => setIndicators({...indicators, bollinger: e.target.checked})}
-                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
-                        />
-                      </label>
                     </div>
                     
                     {/* Quick Actions */}
@@ -501,10 +441,6 @@ export default function App() {
                         onClick={() => setIndicators({
                           ema50: true,
                           ema200: true,
-                          rsi: true,
-                          volume: true,
-                          macd: true,
-                          bollinger: true,
                         })}
                         className="flex-1 px-3 py-1.5 text-xs font-bold uppercase tracking-wider bg-[#003366] hover:bg-[#004488] text-[#00CCFF] border border-[#0066AA] rounded transition-all"
                       >
@@ -514,10 +450,6 @@ export default function App() {
                         onClick={() => setIndicators({
                           ema50: false,
                           ema200: false,
-                          rsi: false,
-                          volume: false,
-                          macd: false,
-                          bollinger: false,
                         })}
                         className="flex-1 px-3 py-1.5 text-xs font-bold uppercase tracking-wider bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#666] border border-[#1A1A1A] rounded transition-all"
                       >

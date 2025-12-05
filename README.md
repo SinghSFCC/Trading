@@ -34,9 +34,23 @@ A professional trading terminal application for Indian stock market (NSE) analys
 py -3.12 -m pip install fastapi uvicorn yfinance pandas pandas_ta google-generativeai
 ```
 
-3. Update `ai_agent.py` with your Google Gemini API key
+3. Install python-dotenv for environment variable support:
+```bash
+py -3.12 -m pip install python-dotenv
+```
 
-4. Run the backend:
+4. Create a `.env` file in the root directory with your Google Gemini API key:
+```bash
+# Create .env file
+echo GEMINI_API_KEY=your_api_key_here > .env
+```
+   Or manually create `.env` file with:
+   ```
+   GEMINI_API_KEY=your_api_key_here
+   ```
+   **Important**: Never commit the `.env` file! It's already in `.gitignore`.
+
+5. Run the backend:
 ```bash
 python main.py
 # or
