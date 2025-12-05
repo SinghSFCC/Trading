@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Search, Cpu, Activity, TrendingUp, BarChart2, Loader2, Target, ShieldAlert, Zap, TrendingDown, DollarSign, Clock, AlertCircle, X } from 'lucide-react';
+import { Search, Cpu, Activity, TrendingUp, BarChart2, Loader2, Target, ShieldAlert, Zap, TrendingDown, DollarSign, Clock, AlertCircle, X, Settings, LineChart } from 'lucide-react';
 import TitanChart from './components/TitanChart';
 
 export default function App() {
@@ -13,6 +13,17 @@ export default function App() {
   const [showAudit, setShowAudit] = useState(false);
   const [timeframe, setTimeframe] = useState("1d"); // Add timeframe state
   const [chartLoading, setChartLoading] = useState(false);
+  const [showIndicatorPanel, setShowIndicatorPanel] = useState(false);
+  
+  // Indicator configuration state
+  const [indicators, setIndicators] = useState({
+    ema50: true,
+    ema200: true,
+    rsi: true,
+    volume: true,
+    macd: false,
+    bollinger: false,
+  });
 
   // Available timeframes
   const timeframes = [
@@ -30,6 +41,17 @@ export default function App() {
   useEffect(() => {
     console.log("🔄 State changed - aiVerdict:", aiVerdict, "showAudit:", showAudit);
   }, [aiVerdict, showAudit]);
+
+  // Close indicator panel when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showIndicatorPanel && !event.target.closest('.indicator-panel') && !event.target.closest('[title="Indicator Settings"]')) {
+        setShowIndicatorPanel(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showIndicatorPanel]);
 
   // Fetch chart data when timeframe changes
   useEffect(() => {
@@ -320,11 +342,28 @@ export default function App() {
                     <span className="ml-2 text-[#888] text-sm">Loading {timeframes.find(tf => tf.value === timeframe)?.label || timeframe} chart...</span>
                   </div>
                 ) : (
-                  <TitanChart data={selectedStock.chart_data || []} interval={timeframe} />
+                  <TitanChart 
+                    data={selectedStock.chart_data || []} 
+                    interval={timeframe}
+                    indicators={indicators}
+                  />
                 )}
                 
-                {/* AI Analysis Button - Terminal Style */}
+                {/* Chart Controls - Terminal Style */}
                 <div className="absolute top-3 right-3 z-10 flex gap-2">
+                  {/* Indicator Settings Button */}
+                  <button
+                    onClick={() => setShowIndicatorPanel(!showIndicatorPanel)}
+                    className={`px-3 py-2 rounded text-xs font-bold uppercase tracking-wider flex items-center gap-2 border transition-all
+                      ${showIndicatorPanel 
+                        ? 'bg-[#00CCFF]/20 text-[#00CCFF] border-[#00CCFF]/40 hover:bg-[#00CCFF]/30' 
+                        : 'bg-[#1A1A1A] text-[#666] border-[#1A1A1A] hover:bg-[#2A2A2A]'}`}
+                    title="Indicator Settings"
+                  >
+                    <Settings size={12} />
+                    INDICATORS
+                  </button>
+                  
                   {aiVerdict && (
                     <button 
                       onClick={() => {
@@ -353,6 +392,140 @@ export default function App() {
                     {aiLoading ? 'ANALYZING...' : 'AI AUDIT'}
                   </button>
                 </div>
+
+                {/* Indicator Configuration Panel - TradingView Style */}
+                {showIndicatorPanel && (
+                  <div className="indicator-panel absolute top-12 right-3 z-20 bg-[#0A0A0A] border border-[#1A1A1A] rounded shadow-2xl min-w-[280px]">
+                    <div className="px-4 py-3 border-b border-[#1A1A1A] flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <LineChart size={16} className="text-[#00CCFF]" />
+                        <span className="text-sm font-bold text-[#E0E0E0]">Indicators</span>
+                      </div>
+                      <button
+                        onClick={() => setShowIndicatorPanel(false)}
+                        className="text-[#666] hover:text-[#E0E0E0] transition-colors"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                    
+                    <div className="p-3 space-y-2 max-h-[400px] overflow-y-auto">
+                      {/* EMA 50 */}
+                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-0.5 bg-[#00CCFF]"></div>
+                          <span className="text-xs text-[#E0E0E0]">EMA 50</span>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={indicators.ema50}
+                          onChange={(e) => setIndicators({...indicators, ema50: e.target.checked})}
+                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
+                        />
+                      </label>
+                      
+                      {/* EMA 200 */}
+                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-0.5 bg-[#FFAA00]"></div>
+                          <span className="text-xs text-[#E0E0E0]">EMA 200</span>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={indicators.ema200}
+                          onChange={(e) => setIndicators({...indicators, ema200: e.target.checked})}
+                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
+                        />
+                      </label>
+                      
+                      {/* RSI */}
+                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-0.5 bg-[#FFAA00]"></div>
+                          <span className="text-xs text-[#E0E0E0]">RSI (14)</span>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={indicators.rsi}
+                          onChange={(e) => setIndicators({...indicators, rsi: e.target.checked})}
+                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
+                        />
+                      </label>
+                      
+                      {/* Volume */}
+                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
+                        <div className="flex items-center gap-2">
+                          <BarChart2 size={12} className="text-[#00CCFF]" />
+                          <span className="text-xs text-[#E0E0E0]">Volume</span>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={indicators.volume}
+                          onChange={(e) => setIndicators({...indicators, volume: e.target.checked})}
+                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
+                        />
+                      </label>
+                      
+                      {/* MACD */}
+                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-0.5 bg-[#00FF00]"></div>
+                          <span className="text-xs text-[#E0E0E0]">MACD</span>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={indicators.macd}
+                          onChange={(e) => setIndicators({...indicators, macd: e.target.checked})}
+                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
+                        />
+                      </label>
+                      
+                      {/* Bollinger Bands */}
+                      <label className="flex items-center justify-between p-2 hover:bg-[#1A1A1A] rounded cursor-pointer transition-colors">
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-0.5 bg-[#666666]"></div>
+                          <span className="text-xs text-[#E0E0E0]">Bollinger Bands</span>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={indicators.bollinger}
+                          onChange={(e) => setIndicators({...indicators, bollinger: e.target.checked})}
+                          className="w-4 h-4 rounded border-[#1A1A1A] bg-[#0A0A0A] text-[#00CCFF] focus:ring-[#00CCFF]"
+                        />
+                      </label>
+                    </div>
+                    
+                    {/* Quick Actions */}
+                    <div className="px-3 py-2 border-t border-[#1A1A1A] flex gap-2">
+                      <button
+                        onClick={() => setIndicators({
+                          ema50: true,
+                          ema200: true,
+                          rsi: true,
+                          volume: true,
+                          macd: true,
+                          bollinger: true,
+                        })}
+                        className="flex-1 px-3 py-1.5 text-xs font-bold uppercase tracking-wider bg-[#003366] hover:bg-[#004488] text-[#00CCFF] border border-[#0066AA] rounded transition-all"
+                      >
+                        All On
+                      </button>
+                      <button
+                        onClick={() => setIndicators({
+                          ema50: false,
+                          ema200: false,
+                          rsi: false,
+                          volume: false,
+                          macd: false,
+                          bollinger: false,
+                        })}
+                        className="flex-1 px-3 py-1.5 text-xs font-bold uppercase tracking-wider bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#666] border border-[#1A1A1A] rounded transition-all"
+                      >
+                        All Off
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Debug Info */}
                 {process.env.NODE_ENV === 'development' && (

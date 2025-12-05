@@ -63,18 +63,102 @@ def fetch_stock_data(symbol, interval="1d"):
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
-            # Indicators - Only calculate for daily and above (intraday indicators may not be meaningful)
+            # Indicators - Calculate all technical indicators
             if interval in ["1d", "5d", "1wk", "1mo", "3mo"]:
+                # Daily and above - full indicators
                 df['EMA_50'] = ta.ema(df['Close'], length=50)
                 df['EMA_200'] = ta.ema(df['Close'], length=200)
                 df['RSI'] = ta.rsi(df['Close'], length=14)
                 df['Vol_SMA'] = ta.sma(df['Volume'], length=20)
+                
+                # MACD (12, 26, 9)
+                try:
+                    macd = ta.macd(df['Close'], fast=12, slow=26, signal=9)
+                    if macd is not None and isinstance(macd, pd.DataFrame):
+                        # Find MACD columns (they might have different naming)
+                        macd_cols = [col for col in macd.columns if 'MACD' in str(col) and 'MACDs' not in str(col) and 'MACDh' not in str(col)]
+                        signal_cols = [col for col in macd.columns if 'MACDs' in str(col)]
+                        hist_cols = [col for col in macd.columns if 'MACDh' in str(col)]
+                        
+                        if macd_cols:
+                            df['MACD'] = macd[macd_cols[0]]
+                        if signal_cols:
+                            df['MACD_Signal'] = macd[signal_cols[0]]
+                        if hist_cols:
+                            df['MACD_Hist'] = macd[hist_cols[0]]
+                except Exception as e:
+                    print(f"⚠️ MACD calculation error: {str(e)}")
+                    df['MACD'] = None
+                    df['MACD_Signal'] = None
+                    df['MACD_Hist'] = None
+                
+                # Bollinger Bands (20, 2)
+                try:
+                    bb = ta.bbands(df['Close'], length=20, std=2)
+                    if bb is not None and isinstance(bb, pd.DataFrame):
+                        # Find BB columns
+                        upper_cols = [col for col in bb.columns if 'BBU' in str(col)]
+                        middle_cols = [col for col in bb.columns if 'BBM' in str(col)]
+                        lower_cols = [col for col in bb.columns if 'BBL' in str(col)]
+                        
+                        if upper_cols:
+                            df['BB_Upper'] = bb[upper_cols[0]]
+                        if middle_cols:
+                            df['BB_Middle'] = bb[middle_cols[0]]
+                        if lower_cols:
+                            df['BB_Lower'] = bb[lower_cols[0]]
+                except Exception as e:
+                    print(f"⚠️ Bollinger Bands calculation error: {str(e)}")
+                    df['BB_Upper'] = None
+                    df['BB_Middle'] = None
+                    df['BB_Lower'] = None
             else:
                 # For intraday, use shorter periods
                 df['EMA_50'] = ta.ema(df['Close'], length=min(50, len(df)))
                 df['RSI'] = ta.rsi(df['Close'], length=14)
                 df['Vol_SMA'] = ta.sma(df['Volume'], length=min(20, len(df)))
                 df['EMA_200'] = None  # Not meaningful for intraday
+                
+                # MACD for intraday (shorter periods)
+                try:
+                    macd = ta.macd(df['Close'], fast=12, slow=26, signal=9)
+                    if macd is not None and isinstance(macd, pd.DataFrame):
+                        macd_cols = [col for col in macd.columns if 'MACD' in str(col) and 'MACDs' not in str(col) and 'MACDh' not in str(col)]
+                        signal_cols = [col for col in macd.columns if 'MACDs' in str(col)]
+                        hist_cols = [col for col in macd.columns if 'MACDh' in str(col)]
+                        
+                        if macd_cols:
+                            df['MACD'] = macd[macd_cols[0]]
+                        if signal_cols:
+                            df['MACD_Signal'] = macd[signal_cols[0]]
+                        if hist_cols:
+                            df['MACD_Hist'] = macd[hist_cols[0]]
+                except Exception as e:
+                    print(f"⚠️ MACD calculation error: {str(e)}")
+                    df['MACD'] = None
+                    df['MACD_Signal'] = None
+                    df['MACD_Hist'] = None
+                
+                # Bollinger Bands for intraday
+                try:
+                    bb_length = min(20, len(df))
+                    bb = ta.bbands(df['Close'], length=bb_length, std=2)
+                    if bb is not None and isinstance(bb, pd.DataFrame):
+                        upper_cols = [col for col in bb.columns if 'BBU' in str(col)]
+                        middle_cols = [col for col in bb.columns if 'BBM' in str(col)]
+                        lower_cols = [col for col in bb.columns if 'BBL' in str(col)]
+                        
+                        if upper_cols:
+                            df['BB_Upper'] = bb[upper_cols[0]]
+                        if middle_cols:
+                            df['BB_Middle'] = bb[middle_cols[0]]
+                        if lower_cols:
+                            df['BB_Lower'] = bb[lower_cols[0]]
+                except Exception as e:
+                    print(f"⚠️ Bollinger Bands calculation error: {str(e)}")
+                    df['BB_Upper'] = None
+                    df['BB_Middle'] = None
+                    df['BB_Lower'] = None
 
             return df
             
@@ -240,13 +324,56 @@ def get_chart_data(symbol: str, interval: str = "1d"):
             print(f"⚠️ Error formatting time for {date_val}: {str(e)}")
             continue
         
-        chart_data.append({
+        # Prepare indicator data
+        indicator_data = {
             "time": time_val,
             "open": float(row['Open']),
             "high": float(row['High']),
             "low": float(row['Low']),
-            "close": float(row['Close'])
-        })
+            "close": float(row['Close']),
+            "volume": float(row['Volume']) if 'Volume' in row else 0,
+        }
+        
+        # Add EMA values
+        if 'EMA_50' in row and not pd.isna(row['EMA_50']):
+            indicator_data['ema_50'] = float(row['EMA_50'])
+        if 'EMA_200' in row and not pd.isna(row['EMA_200']):
+            indicator_data['ema_200'] = float(row['EMA_200'])
+        
+        # Add RSI
+        if 'RSI' in row and not pd.isna(row['RSI']):
+            rsi_val = float(row['RSI'])
+            # Validate RSI is in valid range (0-100)
+            if 0 <= rsi_val <= 100:
+                indicator_data['rsi'] = rsi_val
+        
+        # Add MACD
+        if 'MACD' in row and not pd.isna(row['MACD']):
+            indicator_data['macd'] = float(row['MACD'])
+        if 'MACD_Signal' in row and not pd.isna(row['MACD_Signal']):
+            indicator_data['macd_signal'] = float(row['MACD_Signal'])
+        if 'MACD_Hist' in row and not pd.isna(row['MACD_Hist']):
+            indicator_data['macd_hist'] = float(row['MACD_Hist'])
+        
+        # Add Bollinger Bands
+        if 'BB_Upper' in row and not pd.isna(row['BB_Upper']):
+            indicator_data['bb_upper'] = float(row['BB_Upper'])
+        if 'BB_Middle' in row and not pd.isna(row['BB_Middle']):
+            indicator_data['bb_middle'] = float(row['BB_Middle'])
+        if 'BB_Lower' in row and not pd.isna(row['BB_Lower']):
+            indicator_data['bb_lower'] = float(row['BB_Lower'])
+        
+        chart_data.append(indicator_data)
+    
+    # Debug: Count valid indicator values
+    rsi_count = sum(1 for d in chart_data if 'rsi' in d and 0 <= d['rsi'] <= 100)
+    ema50_count = sum(1 for d in chart_data if 'ema_50' in d)
+    ema200_count = sum(1 for d in chart_data if 'ema_200' in d)
+    print(f"📊 Valid indicators in response - RSI: {rsi_count}/{len(chart_data)}, EMA50: {ema50_count}/{len(chart_data)}, EMA200: {ema200_count}/{len(chart_data)}")
+    
+    if rsi_count > 0:
+        rsi_values = [d['rsi'] for d in chart_data if 'rsi' in d and 0 <= d['rsi'] <= 100]
+        print(f"📊 RSI value range: {min(rsi_values):.2f} - {max(rsi_values):.2f}")
     
     return {
         "symbol": symbol,
