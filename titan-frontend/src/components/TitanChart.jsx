@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
 
-export default function TitanChart({ data }) {
+export default function TitanChart({ data, interval = "1d" }) {
     const chartContainerRef = useRef();
     const chartInstance = useRef(null);
 
@@ -38,7 +38,7 @@ export default function TitanChart({ data }) {
             height: height,
             timeScale: {
                 timeVisible: true,
-                secondsVisible: false,
+                secondsVisible: false, // Will be set dynamically based on interval
                 borderColor: '#1A1A1A',
             },
             rightPriceScale: {
@@ -83,6 +83,27 @@ export default function TitanChart({ data }) {
         if (data && data.length > 0 && candleSeries) {
             try {
                 console.log("📊 Chart Data Received:", data.length, "points");
+                console.log("📊 First data point:", data[0]);
+                console.log("📊 Interval:", interval);
+                
+                // Check if this is intraday data based on interval
+                const isIntraday = interval && ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"].includes(interval);
+                console.log("📊 Is Intraday:", isIntraday);
+                
+                // Configure timeScale based on interval
+                if (isIntraday) {
+                    // For intraday data, show hours and minutes
+                    chart.timeScale().applyOptions({
+                        timeVisible: true,
+                        secondsVisible: false, // Show HH:MM but not seconds
+                    });
+                } else {
+                    // For daily/weekly/monthly, just show dates
+                    chart.timeScale().applyOptions({
+                        timeVisible: true,
+                        secondsVisible: false,
+                    });
+                }
                 
                 // Data ko format aur sort karo
                 const cleanData = data
@@ -99,8 +120,57 @@ export default function TitanChart({ data }) {
                             return null;
                         }
                         
+                        // Handle time format: can be Unix timestamp (number) or string
+                        let timeValue = d.time;
+                        if (isIntraday) {
+                            // For intraday, time should be Unix timestamp (number)
+                            if (typeof timeValue === 'string') {
+                                // Convert string to timestamp if needed
+                                const date = new Date(timeValue);
+                                if (isNaN(date.getTime())) {
+                                    console.warn("Invalid date string:", timeValue);
+                                    return null;
+                                }
+                                timeValue = Math.floor(date.getTime() / 1000);
+                            } else if (typeof timeValue === 'number') {
+                                // Already a timestamp, validate it
+                                if (timeValue <= 0 || isNaN(timeValue)) {
+                                    console.warn("Invalid timestamp:", timeValue, "| Original:", d.time);
+                                    return null;
+                                }
+                                // Use as is
+                            } else {
+                                console.warn("Unexpected time type:", typeof timeValue, timeValue);
+                                return null;
+                            }
+                            
+                            // Final validation for intraday timestamps
+                            if (timeValue <= 0 || timeValue > 2147483647) {
+                                console.warn("Timestamp out of range:", timeValue);
+                                return null;
+                            }
+                        } else {
+                            // For daily/weekly/monthly, time is string format
+                            if (typeof timeValue === 'number') {
+                                // Convert timestamp to date string
+                                if (timeValue <= 0 || isNaN(timeValue)) {
+                                    console.warn("Invalid timestamp for daily data:", timeValue);
+                                    return null;
+                                }
+                                const date = new Date(timeValue * 1000);
+                                if (isNaN(date.getTime())) {
+                                    console.warn("Invalid date from timestamp:", timeValue);
+                                    return null;
+                                }
+                                timeValue = date.toISOString().split('T')[0]; // 'YYYY-MM-DD'
+                            } else if (typeof timeValue !== 'string') {
+                                console.warn("Unexpected time type for daily:", typeof timeValue, timeValue);
+                                return null;
+                            }
+                        }
+                        
                         return {
-                            time: d.time, // String 'YYYY-MM-DD' format
+                            time: timeValue, // Unix timestamp (number) for intraday, string for daily
                             open: open,
                             high: high,
                             low: low,
@@ -110,16 +180,24 @@ export default function TitanChart({ data }) {
                     .filter(d => d !== null) // Remove invalid entries
                     .sort((a, b) => {
                         // Sort by time
-                        const dateA = new Date(a.time);
-                        const dateB = new Date(b.time);
-                        return dateA - dateB;
+                        if (isIntraday) {
+                            // Both are numbers (timestamps)
+                            return a.time - b.time;
+                        } else {
+                            // Both are strings (dates)
+                            return new Date(a.time) - new Date(b.time);
+                        }
                     })
                     // Duplicates hatao
                     .filter((item, index, self) => 
                         index === self.findIndex((t) => t.time === item.time)
                     );
 
-                console.log("✅ Clean Data Points:", cleanData.length);
+                console.log("✅ Clean Data Points:", cleanData.length, "| Intraday:", isIntraday);
+                if (cleanData.length > 0) {
+                    console.log("📊 First clean data point time:", cleanData[0].time, "| Type:", typeof cleanData[0].time);
+                    console.log("📊 Last clean data point time:", cleanData[cleanData.length - 1].time, "| Type:", typeof cleanData[cleanData.length - 1].time);
+                }
                 
                 if (cleanData.length > 0) {
                     candleSeries.setData(cleanData);
@@ -161,7 +239,7 @@ export default function TitanChart({ data }) {
                 chartInstance.current = null;
             }
         };
-    }, [data]);
+    }, [data, interval]);
 
     return <div ref={chartContainerRef} className="w-full h-full min-h-[400px]" />;
 }

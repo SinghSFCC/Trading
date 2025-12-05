@@ -11,11 +11,56 @@ export default function App() {
   const [aiVerdict, setAiVerdict] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
+  const [timeframe, setTimeframe] = useState("1d"); // Add timeframe state
+  const [chartLoading, setChartLoading] = useState(false);
+
+  // Available timeframes
+  const timeframes = [
+    { value: "1m", label: "1 Min" },
+    { value: "5m", label: "5 Min" },
+    { value: "15m", label: "15 Min" },
+    { value: "30m", label: "30 Min" },
+    { value: "1h", label: "1 Hour" },
+    { value: "1d", label: "1 Day" },
+    { value: "1wk", label: "1 Week" },
+    { value: "1mo", label: "1 Month" },
+  ];
 
   // Debug: Track state changes
   useEffect(() => {
     console.log("🔄 State changed - aiVerdict:", aiVerdict, "showAudit:", showAudit);
   }, [aiVerdict, showAudit]);
+
+  // Fetch chart data when timeframe changes
+  useEffect(() => {
+    if (selectedStock && selectedStock.symbol) {
+      fetchChartData(selectedStock.symbol, timeframe);
+    }
+  }, [timeframe]);
+
+  // Fetch chart data function
+  const fetchChartData = async (symbol, interval) => {
+    if (!symbol) return;
+    
+    setChartLoading(true);
+    try {
+      const res = await axios.get(`http://127.0.0.1:8000/api/chart/${symbol}`, {
+        params: { interval }
+      });
+      
+      if (res.data && res.data.data) {
+        setSelectedStock(prev => ({
+          ...prev,
+          chart_data: res.data.data,
+          current_timeframe: interval
+        }));
+      }
+    } catch (error) {
+      console.error("Chart data fetch error:", error);
+    } finally {
+      setChartLoading(false);
+    }
+  };
 
   // --- SCAN ENGINE ---
   const runScan = async () => {
@@ -48,6 +93,10 @@ export default function App() {
     setSelectedStock(stock);
     setAiVerdict(null); // Reset AI on new stock selection
     setShowAudit(false); // Hide audit when switching stocks
+    // Fetch chart data with current timeframe
+    if (stock.symbol) {
+      fetchChartData(stock.symbol, timeframe);
+    }
   };
 
   // --- REAL AI INTEGRATION ---
@@ -214,12 +263,32 @@ export default function App() {
                   <div className="flex items-center gap-3 mb-1">
                     <h2 className="text-2xl font-bold text-[#E0E0E0] tracking-tight">{selectedStock.symbol.replace('.NS','').replace('.BO','')}</h2>
                     <span className="text-[10px] text-[#666] bg-[#1A1A1A] px-2 py-0.5 rounded uppercase">NSE</span>
+                    {/* Timeframe Display */}
+                    <span className="text-[10px] text-[#00CCFF] bg-[#003366] px-2 py-0.5 rounded uppercase border border-[#0066AA]">
+                      {timeframes.find(tf => tf.value === timeframe)?.label || timeframe}
+                    </span>
                   </div>
                   <div className="flex items-center gap-4 text-xs">
                     <span className="text-[#888]">EQUITY</span>
                     <span className="text-[#00FF00] font-mono font-bold text-lg">₹{selectedStock.current_price}</span>
                   </div>
                 </div>
+              </div>
+              
+              {/* Timeframe Selector */}
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-[#666] uppercase mr-2">Timeframe:</span>
+                <select
+                  value={timeframe}
+                  onChange={(e) => setTimeframe(e.target.value)}
+                  className="bg-[#0A0A0A] border border-[#1A1A1A] text-[#E0E0E0] text-xs px-3 py-1.5 rounded focus:outline-none focus:border-[#00CCFF] hover:border-[#333] transition-colors cursor-pointer"
+                >
+                  {timeframes.map(tf => (
+                    <option key={tf.value} value={tf.value} className="bg-[#0A0A0A]">
+                      {tf.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               
               {/* Metrics Panel */}
@@ -245,7 +314,14 @@ export default function App() {
             <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
               <div className={`relative bg-[#000000] ${aiVerdict && showAudit ? 'h-[500px] flex-shrink-0' : 'flex-1'} min-h-[400px] ${!aiVerdict || !showAudit ? 'border-b border-[#1A1A1A]' : ''}`}>
                 {/* Chart Component */}
-                <TitanChart data={selectedStock.chart_data || []} />
+                {chartLoading ? (
+                  <div className="flex items-center justify-center h-full">
+                    <Loader2 className="animate-spin text-[#00CCFF]" size={24} />
+                    <span className="ml-2 text-[#888] text-sm">Loading {timeframes.find(tf => tf.value === timeframe)?.label || timeframe} chart...</span>
+                  </div>
+                ) : (
+                  <TitanChart data={selectedStock.chart_data || []} interval={timeframe} />
+                )}
                 
                 {/* AI Analysis Button - Terminal Style */}
                 <div className="absolute top-3 right-3 z-10 flex gap-2">

@@ -22,7 +22,7 @@ app.add_middleware(
 
 # --- HELPER FUNCTIONS ---
 
-def fetch_stock_data(symbol):
+def fetch_stock_data(symbol, interval="1d"):
     """Yahoo Finance se data layega (With Retry & Smart Delay)"""
     # Throttling to prevent 401 Errors
     time.sleep(random.uniform(0.5, 1.5))
@@ -32,34 +32,54 @@ def fetch_stock_data(symbol):
             if not symbol.endswith(".NS") and not symbol.endswith(".BO"):
                 symbol += ".NS"
             
-            # Fetch Data - Using 'max' to get all available historical data (up to ~30 years)
-            # This provides better data for technical indicators like EMA_200
-            # Adding timeout to prevent hanging
-            df = yf.download(symbol, period="max", interval="1d", progress=False, auto_adjust=True, timeout=30)
+            # Fetch Data - Handle different intervals
+            # Yahoo Finance limits:
+            # - 1m, 2m, 5m: max 7 days
+            # - 15m, 30m: max 60 days  
+            # - 1h: max 730 days (2 years)
+            # - Daily and above: unlimited
+            if interval in ["1m", "2m", "5m"]:
+                period = "7d"  # Smallest intervals: 7 days max
+            elif interval in ["15m", "30m"]:
+                period = "60d"  # Medium intervals: 60 days max
+            elif interval in ["60m", "90m", "1h"]:
+                period = "730d"  # Hourly: 2 years max
+            else:
+                period = "max"  # Daily/weekly/monthly can get max data
             
-            # Need at least 200 days for EMA_200, but allow 50 for flexibility
+            df = yf.download(symbol, period=period, interval=interval, progress=False, auto_adjust=True, timeout=30)
+            
+            # Need at least 50 data points
             if df.empty or len(df) < 50: 
-                print(f"⚠️ {symbol}: Not enough data ({len(df) if not df.empty else 0} days)")
+                print(f"⚠️ {symbol}: Not enough data ({len(df) if not df.empty else 0} points) for {interval}")
                 return None
             
             # Debug: Log data range to see what we're getting
             if len(df) > 0:
-                print(f"📈 Fetched {len(df)} days for {symbol} | Range: {df.index[0].strftime('%Y-%m-%d')} to {df.index[-1].strftime('%Y-%m-%d')}")
+                days_span = (df.index[-1] - df.index[0]).days if len(df) > 1 else 0
+                print(f"📈 Fetched {len(df)} {interval} candles for {symbol} | Range: {df.index[0]} to {df.index[-1]} | Span: ~{days_span} days")
 
             # Clean Data
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
-            # Indicators
-            df['EMA_50'] = ta.ema(df['Close'], length=50)
-            df['EMA_200'] = ta.ema(df['Close'], length=200)
-            df['RSI'] = ta.rsi(df['Close'], length=14)
-            df['Vol_SMA'] = ta.sma(df['Volume'], length=20)
+            # Indicators - Only calculate for daily and above (intraday indicators may not be meaningful)
+            if interval in ["1d", "5d", "1wk", "1mo", "3mo"]:
+                df['EMA_50'] = ta.ema(df['Close'], length=50)
+                df['EMA_200'] = ta.ema(df['Close'], length=200)
+                df['RSI'] = ta.rsi(df['Close'], length=14)
+                df['Vol_SMA'] = ta.sma(df['Volume'], length=20)
+            else:
+                # For intraday, use shorter periods
+                df['EMA_50'] = ta.ema(df['Close'], length=min(50, len(df)))
+                df['RSI'] = ta.rsi(df['Close'], length=14)
+                df['Vol_SMA'] = ta.sma(df['Volume'], length=min(20, len(df)))
+                df['EMA_200'] = None  # Not meaningful for intraday
 
             return df
             
         except Exception as e:
-            print(f"❌ Error fetching {symbol}: {str(e)[:100]}")
+            print(f"❌ Error fetching {symbol} with interval {interval}: {str(e)[:100]}")
             time.sleep(1)
             continue
             
@@ -99,34 +119,141 @@ def home():
     return {"message": "Titan Command Center is Online 🚀"}
 
 @app.get("/api/scan/{symbol}")
-def scan_stock(symbol: str):
+def scan_stock(symbol: str, interval: str = "1d"):
     # Single stock scan logic (Optional use)
-    df = fetch_stock_data(symbol)
+    df = fetch_stock_data(symbol, interval=interval)
     if df is None:
         raise HTTPException(status_code=404, detail="Data Not Found")
-    return {"status": "OK", "symbol": symbol}
+    return {"status": "OK", "symbol": symbol, "interval": interval}
 
 @app.get("/api/audit/{symbol}")
-def get_ai_audit(symbol: str):
+def get_ai_audit(symbol: str, interval: str = "1d"):
     """AI se stock ka audit karwayega"""
-    df = fetch_stock_data(symbol)
+    df = fetch_stock_data(symbol, interval=interval)
     
     if df is None:
         return {"verdict": "ERROR", "reason": "Could not fetch live data."}
         
     # Prepare Data for AI
     curr_price = round(df['Close'].iloc[-1], 2)
-    rsi = round(df['RSI'].iloc[-1], 1)
+    rsi = round(df['RSI'].iloc[-1], 1) if 'RSI' in df.columns and not pd.isna(df['RSI'].iloc[-1]) else 50
     
-    vol_avg = df['Vol_SMA'].iloc[-1]
+    vol_avg = df['Vol_SMA'].iloc[-1] if 'Vol_SMA' in df.columns else df['Volume'].iloc[-1]
     if pd.isna(vol_avg) or vol_avg == 0: vol_avg = 1
     vol_x = round(df['Volume'].iloc[-1] / vol_avg, 1)
     
-    # Recent Trend (Last 5 days)
+    # Recent Trend (Last 5 data points)
     recent_trend = df['Close'].tail(5).to_list()
     
     # Call Gemini Agent
     return audit_stock(symbol, curr_price, rsi, vol_x, recent_trend)
+
+@app.get("/api/chart/{symbol}")
+def get_chart_data(symbol: str, interval: str = "1d"):
+    """Get chart data for a specific symbol and timeframe"""
+    df = fetch_stock_data(symbol, interval=interval)
+    
+    if df is None:
+        raise HTTPException(status_code=404, detail="Data Not Found")
+    
+    # Limit chart data points for performance
+    # For intraday: Use ALL available data (Yahoo Finance already limits to 7 days max)
+    # For daily/weekly/monthly: Limit to last 2000 points for performance
+    if interval in ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"]:
+        # Use all intraday data - Yahoo Finance already limits to 7 days
+        chart_df = df.reset_index()  # All available intraday data
+        print(f"📊 Using all {len(chart_df)} intraday candles (max 7 days from Yahoo Finance)")
+    else:
+        chart_df = df.tail(2000).reset_index()  # Last 2000 for daily/weekly/monthly
+        print(f"📊 Using last {len(chart_df)} candles for {interval} timeframe")
+    
+    # Debug: Check column names
+    print(f"📊 Chart columns for {symbol} ({interval}): {list(chart_df.columns)}")
+    if len(chart_df) > 0:
+        print(f"📊 First row index: {chart_df.index[0] if len(chart_df) > 0 else 'N/A'}")
+        print(f"📊 First row data: {chart_df.iloc[0].to_dict() if len(chart_df) > 0 else 'N/A'}")
+    
+    # Format time based on interval
+    chart_data = []
+    
+    # Find the date/datetime column name
+    date_col = None
+    for col in chart_df.columns:
+        if col.lower() in ['date', 'datetime', 'time', 'timestamp']:
+            date_col = col
+            break
+    
+    # If no date column found, the index should be the datetime
+    if date_col is None and len(chart_df) > 0:
+        # Check if index is datetime
+        if isinstance(chart_df.index, pd.DatetimeIndex):
+            # Use index directly
+            date_col = '__index__'
+        else:
+            # Try first column that looks like datetime
+            for col in chart_df.columns:
+                if pd.api.types.is_datetime64_any_dtype(chart_df[col]):
+                    date_col = col
+                    break
+    
+    print(f"📊 Date column found: {date_col}")
+    
+    for idx, row in chart_df.iterrows():
+        # Handle date formatting based on interval
+        if date_col == '__index__':
+            # Use the index directly (idx is the index value when using iterrows)
+            date_val = idx
+        elif date_col and date_col in row:
+            date_val = row[date_col]
+        else:
+            # Last resort: try to get from row name or index
+            date_val = row.name if hasattr(row, 'name') and row.name is not None else idx
+        
+        if date_val is None:
+            print(f"⚠️ Warning: Could not find date value for row")
+            continue
+        
+        # For intraday intervals, use Unix timestamp (number) for better time display
+        # For daily/weekly/monthly, use string format
+        try:
+            if interval in ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"]:
+                # Convert to Unix timestamp (seconds since epoch)
+                # First convert to pandas Timestamp to ensure proper handling
+                dt = pd.to_datetime(date_val)
+                if pd.isna(dt):
+                    print(f"⚠️ Warning: Invalid date value: {date_val}")
+                    continue
+                time_val = int(dt.timestamp())
+                
+                # Validate timestamp is reasonable (not 0 or negative, and not too far in future)
+                if time_val <= 0 or time_val > 2147483647:  # Max 32-bit timestamp
+                    print(f"⚠️ Warning: Invalid timestamp {time_val} for date {date_val}")
+                    continue
+            else:
+                # For daily/weekly/monthly, use string format 'YYYY-MM-DD'
+                dt = pd.to_datetime(date_val)
+                if pd.isna(dt):
+                    print(f"⚠️ Warning: Invalid date value: {date_val}")
+                    continue
+                time_val = dt.strftime('%Y-%m-%d')
+        except Exception as e:
+            print(f"⚠️ Error formatting time for {date_val}: {str(e)}")
+            continue
+        
+        chart_data.append({
+            "time": time_val,
+            "open": float(row['Open']),
+            "high": float(row['High']),
+            "low": float(row['Low']),
+            "close": float(row['Close'])
+        })
+    
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "data": chart_data,
+        "count": len(chart_data)
+    }
 
 @app.get("/api/bulk_scan")
 def bulk_scan():
