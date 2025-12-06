@@ -44,20 +44,19 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
   // Initialize lightweight-charts for Titan mode
   useEffect(() => {
     if (mode === 'titan' && data && data.length > 0 && chartContainerRef.current) {
-      // Clean up existing chart
+      // Prevent duplicate initialization
       if (chartInstance.current) {
-        try {
-          chartInstance.current.remove();
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-        chartInstance.current = null;
-        candleSeriesRef.current = null;
+        return;
       }
 
       const initializeChart = () => {
         const container = chartContainerRef.current;
         if (!container) return;
+        
+        // Double-check no chart exists
+        if (chartInstance.current) {
+          return;
+        }
         
         const width = container.clientWidth || container.offsetWidth || 800;
         const height = container.clientHeight || container.offsetHeight || 400;
@@ -68,6 +67,8 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
         }
         
         const chart = createChart(container, {
+          width: width,
+          height: height,
           layout: {
             background: { type: ColorType.Solid, color: '#000000' },
             textColor: '#888888',
@@ -96,7 +97,7 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
             rightOffset: 0,
             barSpacing: 6,
             rightBarStaysOnScroll: true,
-            lockVisibleTimeRangeOnResize: true,
+            lockVisibleTimeRangeOnResize: false,
           },
           rightPriceScale: {
             borderColor: '#1A1A1A',
@@ -196,8 +197,11 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
           chart.timeScale().fitContent();
         }
 
-        chartInstance.current = chart;
-        candleSeriesRef.current = candleSeries;
+        // Store chart instance only if not already set
+        if (!chartInstance.current) {
+          chartInstance.current = chart;
+          candleSeriesRef.current = candleSeries;
+        }
         
         // Add support/resistance lines immediately after chart is created
         if (levels && (levels.support?.length > 0 || levels.resistance?.length > 0)) {
@@ -209,7 +213,7 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
                   const priceLine = candleSeries.createPriceLine({
                     price: price,
                     color: '#00FF00',
-                    lineWidth: 2,
+                    lineWidth: 3,
                     lineStyle: 2, // Dashed
                     axisLabelVisible: true,
                     title: `S: ${price.toFixed(2)}`,
@@ -229,7 +233,7 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
                   const priceLine = candleSeries.createPriceLine({
                     price: price,
                     color: '#FF0000',
-                    lineWidth: 2,
+                    lineWidth: 3,
                     lineStyle: 2, // Dashed
                     axisLabelVisible: true,
                     title: `R: ${price.toFixed(2)}`,
@@ -276,6 +280,7 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
           }
           chartInstance.current = null;
           candleSeriesRef.current = null;
+          priceLinesRef.current = [];
         }
       };
     }
@@ -302,7 +307,7 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
               const priceLine = candleSeriesRef.current.createPriceLine({
                 price: price,
                 color: '#00FF00',
-                lineWidth: 2,
+                lineWidth: 3,
                 lineStyle: 2, // Dashed
                 axisLabelVisible: true,
                 title: `S: ${price.toFixed(2)}`,
@@ -323,7 +328,7 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
               const priceLine = candleSeriesRef.current.createPriceLine({
                 price: price,
                 color: '#FF0000',
-                lineWidth: 2,
+                lineWidth: 3,
                 lineStyle: 2, // Dashed
                 axisLabelVisible: true,
                 title: `R: ${price.toFixed(2)}`,
@@ -340,40 +345,106 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
 
   // Zoom functions for lightweight-charts
   const handleZoomIn = () => {
-    if (chartInstance.current) {
+    if (!chartInstance.current || !candleSeriesRef.current) {
+      return;
+    }
+    
+    try {
       const timeScale = chartInstance.current.timeScale();
       const visibleRange = timeScale.getVisibleRange();
-      if (visibleRange) {
-        const from = typeof visibleRange.from === 'number' ? visibleRange.from : new Date(visibleRange.from).getTime() / 1000;
-        const to = typeof visibleRange.to === 'number' ? visibleRange.to : new Date(visibleRange.to).getTime() / 1000;
-        const range = to - from;
-        const newRange = range * 0.7;
-        const center = (from + to) / 2;
-        
+      
+      if (!visibleRange || visibleRange.from === null || visibleRange.to === null) {
+        return;
+      }
+      
+      // Check if we're using date strings (daily) or timestamps (intraday)
+      const isDateString = typeof visibleRange.from === 'string';
+      
+      let from, to;
+      if (isDateString) {
+        // For daily charts, work with Date objects
+        from = new Date(visibleRange.from).getTime();
+        to = new Date(visibleRange.to).getTime();
+      } else {
+        // For intraday charts, work with Unix timestamps (seconds)
+        from = visibleRange.from * 1000; // Convert to milliseconds
+        to = visibleRange.to * 1000;
+      }
+      
+      const range = to - from;
+      const newRange = range * 0.7; // Zoom in by 30%
+      const center = (from + to) / 2;
+      const newFrom = center - newRange / 2;
+      const newTo = center + newRange / 2;
+      
+      // Set new range with correct format
+      if (isDateString) {
+        // For daily charts, convert back to date strings
         timeScale.setVisibleRange({
-          from: center - newRange / 2,
-          to: center + newRange / 2,
+          from: new Date(newFrom).toISOString().split('T')[0],
+          to: new Date(newTo).toISOString().split('T')[0],
+        });
+      } else {
+        // For intraday charts, convert back to Unix timestamps (seconds)
+        timeScale.setVisibleRange({
+          from: Math.floor(newFrom / 1000),
+          to: Math.floor(newTo / 1000),
         });
       }
+    } catch (error) {
+      console.error('Zoom error:', error);
     }
   };
 
   const handleZoomOut = () => {
-    if (chartInstance.current) {
+    if (!chartInstance.current || !candleSeriesRef.current) {
+      return;
+    }
+    
+    try {
       const timeScale = chartInstance.current.timeScale();
       const visibleRange = timeScale.getVisibleRange();
-      if (visibleRange) {
-        const from = typeof visibleRange.from === 'number' ? visibleRange.from : new Date(visibleRange.from).getTime() / 1000;
-        const to = typeof visibleRange.to === 'number' ? visibleRange.to : new Date(visibleRange.to).getTime() / 1000;
-        const range = to - from;
-        const newRange = range * 1.4;
-        const center = (from + to) / 2;
-        
+      
+      if (!visibleRange || visibleRange.from === null || visibleRange.to === null) {
+        return;
+      }
+      
+      // Check if we're using date strings (daily) or timestamps (intraday)
+      const isDateString = typeof visibleRange.from === 'string';
+      
+      let from, to;
+      if (isDateString) {
+        // For daily charts, work with Date objects
+        from = new Date(visibleRange.from).getTime();
+        to = new Date(visibleRange.to).getTime();
+      } else {
+        // For intraday charts, work with Unix timestamps (seconds)
+        from = visibleRange.from * 1000; // Convert to milliseconds
+        to = visibleRange.to * 1000;
+      }
+      
+      const range = to - from;
+      const newRange = range * 1.4; // Zoom out by 40%
+      const center = (from + to) / 2;
+      const newFrom = center - newRange / 2;
+      const newTo = center + newRange / 2;
+      
+      // Set new range with correct format
+      if (isDateString) {
+        // For daily charts, convert back to date strings
         timeScale.setVisibleRange({
-          from: center - newRange / 2,
-          to: center + newRange / 2,
+          from: new Date(newFrom).toISOString().split('T')[0],
+          to: new Date(newTo).toISOString().split('T')[0],
+        });
+      } else {
+        // For intraday charts, convert back to Unix timestamps (seconds)
+        timeScale.setVisibleRange({
+          from: Math.floor(newFrom / 1000),
+          to: Math.floor(newTo / 1000),
         });
       }
+    } catch (error) {
+      console.error('Zoom error:', error);
     }
   };
 
@@ -416,37 +487,45 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
     <div className="w-full h-full min-h-[400px] relative flex flex-col">
       {data && data.length > 0 ? (
         <>
-          <div ref={chartContainerRef} className="w-full flex-1 min-h-[400px]" style={{ paddingBottom: '48px' }} />
-          
-          {/* Zoom Controls - Bottom Bar (TradingView Style) */}
-          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-4 py-2 bg-[#0A0A0A] border-t border-[#1A1A1A] z-50">
-            {/* Left Side - Empty for now, can add controls later */}
-            <div></div>
+          <div className="w-full flex-1 min-h-[400px] relative">
+            <div ref={chartContainerRef} className="w-full h-full" />
             
-            {/* Right Side - Zoom Controls */}
-            <div className="flex items-center gap-2">
+            {/* Zoom Controls - Right Side Bottom Bar */}
+            <div 
+              className="absolute bottom-0 right-0 flex items-center justify-end px-4 py-2 bg-transparent"
+              style={{ 
+                zIndex: 100,
+                pointerEvents: 'auto'
+              }}
+            >
+            {/* Right Side Zoom Controls */}
+            <div className="flex items-center gap-2" style={{ pointerEvents: 'auto' }}>
               <button
                 onClick={handleZoomIn}
-                className="p-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] rounded transition-colors flex items-center justify-center"
+                className="p-2 bg-black/30 hover:bg-black/50 backdrop-blur-md text-white/90 hover:text-white rounded transition-all flex items-center justify-center cursor-pointer border border-white/10 hover:border-white/20 shadow-lg"
                 title="Zoom In (+)"
+                type="button"
               >
                 <ZoomIn size={18} />
               </button>
               <button
                 onClick={handleZoomOut}
-                className="p-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] rounded transition-colors flex items-center justify-center"
+                className="p-2 bg-black/30 hover:bg-black/50 backdrop-blur-md text-white/90 hover:text-white rounded transition-all flex items-center justify-center cursor-pointer border border-white/10 hover:border-white/20 shadow-lg"
                 title="Zoom Out (-)"
+                type="button"
               >
                 <ZoomOut size={18} />
               </button>
               <button
                 onClick={handleResetZoom}
-                className="p-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#E0E0E0] rounded transition-colors flex items-center justify-center"
+                className="p-2 bg-black/30 hover:bg-black/50 backdrop-blur-md text-white/90 hover:text-white rounded transition-all flex items-center justify-center cursor-pointer border border-white/10 hover:border-white/20 shadow-lg"
                 title="Reset Zoom (Fit Content)"
+                type="button"
               >
                 <RotateCcw size={18} />
               </button>
             </div>
+          </div>
           </div>
         </>
       ) : (

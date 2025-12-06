@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import yfinance as yf
 import pandas_ta as ta
 import pandas as pd
@@ -9,6 +10,7 @@ import time
 import random
 import numpy as np
 from scipy.signal import find_peaks
+import json
 # Import our new AI Agent
 from ai_agent import audit_stock
 import google.generativeai as genai
@@ -243,40 +245,75 @@ def calculate_sr_levels(df):
             distance=min_distance
         )
         
-        # Extract resistance prices (from High)
-        resistance_levels = [float(high_prices[idx]) for idx in resistance_peaks]
+        # Get current price (last close price)
+        current_price = float(close_prices[-1])
         
-        # Extract support prices (from Low)
-        support_levels = [float(low_prices[idx]) for idx in support_peaks]
+        # Filter range: Only include levels within 20% above/below current price
+        # This ensures we only show levels where price can realistically move
+        price_range_percent = 0.20  # 20% range
+        min_price = current_price * (1 - price_range_percent)
+        max_price = current_price * (1 + price_range_percent)
         
-        # Sort and limit to top 5 strongest levels (by prominence)
+        # Extract resistance prices (from High) and filter by proximity to current price
+        resistance_levels = []
+        resistance_prominences_list = []
+        resistance_prominences = resistance_properties.get('prominences', [])
+        for i, idx in enumerate(resistance_peaks):
+            price = float(high_prices[idx])
+            # Only include resistance levels above current price and within range
+            if min_price <= price <= max_price and price > current_price:
+                resistance_levels.append(price)
+                # Get prominence for this level
+                if i < len(resistance_prominences):
+                    resistance_prominences_list.append(resistance_prominences[i])
+                else:
+                    resistance_prominences_list.append(0)
+        
+        # Extract support prices (from Low) and filter by proximity to current price
+        support_levels = []
+        support_prominences_list = []
+        support_prominences = support_properties.get('prominences', [])
+        for i, idx in enumerate(support_peaks):
+            price = float(low_prices[idx])
+            # Only include support levels below current price and within range
+            if min_price <= price <= max_price and price < current_price:
+                support_levels.append(price)
+                # Get prominence for this level
+                if i < len(support_prominences):
+                    support_prominences_list.append(support_prominences[i])
+                else:
+                    support_prominences_list.append(0)
+        
+        # Sort by prominence and limit to top 3 strongest levels near current price
         if len(resistance_levels) > 0:
-            # Get prominence values for resistance
-            resistance_prominences = resistance_properties.get('prominences', [])
-            # Sort by prominence (descending) and take top 5
-            if len(resistance_prominences) > 0:
+            if len(resistance_prominences_list) > 0:
                 sorted_resistance = sorted(
-                    zip(resistance_levels, resistance_prominences),
+                    zip(resistance_levels, resistance_prominences_list),
                     key=lambda x: x[1],
                     reverse=True
                 )
-                resistance_levels = [level[0] for level in sorted_resistance[:5]]
+                resistance_levels = [level[0] for level in sorted_resistance[:3]]
             else:
-                resistance_levels = sorted(resistance_levels, reverse=True)[:5]
+                # Sort by distance from current price (closest first)
+                resistance_levels = sorted(
+                    [r for r in resistance_levels if r > current_price],
+                    key=lambda x: abs(x - current_price)
+                )[:3]
         
         if len(support_levels) > 0:
-            # Get prominence values for support
-            support_prominences = support_properties.get('prominences', [])
-            # Sort by prominence (descending) and take top 5
-            if len(support_prominences) > 0:
+            if len(support_prominences_list) > 0:
                 sorted_support = sorted(
-                    zip(support_levels, support_prominences),
+                    zip(support_levels, support_prominences_list),
                     key=lambda x: x[1],
                     reverse=True
                 )
-                support_levels = [level[0] for level in sorted_support[:5]]
+                support_levels = [level[0] for level in sorted_support[:3]]
             else:
-                support_levels = sorted(support_levels)[:5]
+                # Sort by distance from current price (closest first)
+                support_levels = sorted(
+                    [s for s in support_levels if s < current_price],
+                    key=lambda x: abs(x - current_price)
+                )[:3]
         
         return {
             "support": support_levels,
@@ -496,6 +533,7 @@ def get_chart_data(symbol: str, interval: str = "1d"):
 
 @app.get("/api/bulk_scan")
 def bulk_scan():
+    """Legacy endpoint - kept for compatibility"""
     results = []
     try:
         with open("stocks.txt", "r") as f:
@@ -516,9 +554,6 @@ def bulk_scan():
                     status = check_titan_criteria(df)
                     if status == "BUY":
                         print(f"✅ {stock} passed criteria!")
-                        # Chart Data - Using last 2000 days (~5-6 years) for comprehensive historical view
-                        # This shows much more historical data while still being performant
-                        # For all data, use: chart_df = df.reset_index()
                         chart_df = df.tail(2000).reset_index()
                         print(f"📊 Chart data for {stock}: {len(chart_df)} days | Range: {chart_df['Date'].iloc[0].strftime('%Y-%m-%d')} to {chart_df['Date'].iloc[-1].strftime('%Y-%m-%d')}")
                         
@@ -529,10 +564,7 @@ def bulk_scan():
                             for _, row in chart_df.iterrows()
                         ]
                         
-                        # Calculate support/resistance levels
                         sr_levels = calculate_sr_levels(df)
-                        
-                        # Check if TradingView is supported (ends with .NS or .BO)
                         has_tradingview = stock.endswith(".NS") or stock.endswith(".BO")
                         
                         return {
@@ -550,7 +582,6 @@ def bulk_scan():
                 pass
             return None
 
-        # Max 4 workers to keep Yahoo happy
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = executor.map(scan_single, stocks)
             for res in futures:
@@ -560,6 +591,89 @@ def bulk_scan():
         return {"error": str(e)}
         
     return {"gems": results}
+
+@app.get("/api/bulk_scan_stream")
+def bulk_scan_stream():
+    """Streaming endpoint that sends real-time progress updates"""
+    def generate():
+        results = []
+        try:
+            with open("stocks.txt", "r") as f:
+                raw_stocks = [line.strip() for line in f if line.strip()]
+            
+            stocks = []
+            for s in raw_stocks:
+                if not s.endswith(".NS") and not s.endswith(".BO"):
+                    s += ".BO" if s.isdigit() else ".NS"
+                stocks.append(s)
+
+            total_stocks = len(stocks)
+            scanned_count = 0
+            gems_found = 0
+
+            # Send initial progress
+            yield f"data: {json.dumps({'type': 'start', 'total': total_stocks, 'message': f'🚀 Starting scan of {total_stocks} stocks...'})}\n\n"
+
+            def scan_single(stock):
+                try:
+                    df = fetch_stock_data(stock)
+                    if df is not None:
+                        status = check_titan_criteria(df)
+                        if status == "BUY":
+                            chart_df = df.tail(2000).reset_index()
+                            chart_data = [
+                                {"time": row['Date'].strftime('%Y-%m-%d'), 
+                                 "open": row['Open'], "high": row['High'], 
+                                 "low": row['Low'], "close": row['Close']}
+                                for _, row in chart_df.iterrows()
+                            ]
+                            sr_levels = calculate_sr_levels(df)
+                            has_tradingview = stock.endswith(".NS") or stock.endswith(".BO")
+                            
+                            return {
+                                "symbol": stock,
+                                "current_price": round(df['Close'].iloc[-1], 2),
+                                "rsi": round(df['RSI'].iloc[-1], 1),
+                                "volume_x": round(df['Volume'].iloc[-1] / (df['Vol_SMA'].iloc[-1] + 1), 1),
+                                "status": "💎 BUY",
+                                "chart_data": chart_data,
+                                "sr_levels": sr_levels,
+                                "has_tradingview": has_tradingview
+                            }
+                except Exception as e:
+                    pass
+                return None
+
+            # Use as_completed to get results as they finish
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_stock = {executor.submit(scan_single, stock): stock for stock in stocks}
+                
+                for future in as_completed(future_to_stock):
+                    stock = future_to_stock[future]
+                    scanned_count += 1
+                    progress = int((scanned_count / total_stocks) * 100)
+                    
+                    try:
+                        res = future.result()
+                        if res:
+                            results.append(res)
+                            gems_found += 1
+                            # Send gem found update
+                            yield f"data: {json.dumps({'type': 'gem', 'stock': stock, 'gems_found': gems_found, 'data': res})}\n\n"
+                        
+                        # Send progress update
+                        yield f"data: {json.dumps({'type': 'progress', 'current': stock, 'scanned': scanned_count, 'total': total_stocks, 'progress': progress, 'gems_found': gems_found})}\n\n"
+                    except Exception as e:
+                        # Send progress update even on error
+                        yield f"data: {json.dumps({'type': 'progress', 'current': stock, 'scanned': scanned_count, 'total': total_stocks, 'progress': progress, 'gems_found': gems_found, 'error': str(e)[:50]})}\n\n"
+
+            # Send completion
+            yield f"data: {json.dumps({'type': 'complete', 'gems': results, 'total_scanned': scanned_count, 'gems_found': gems_found})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 @app.post("/api/chat")
 def chat_with_stock(request: ChatRequest):

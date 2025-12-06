@@ -17,6 +17,8 @@ export default function App() {
   const [showRightSidebar, setShowRightSidebar] = useState(false);
   const [showLeftSidebar, setShowLeftSidebar] = useState(false);
   const [viewMode, setViewMode] = useState('titan'); // Default to Titan view
+  const [showSRLines, setShowSRLines] = useState(true); // Show S&R lines by default
+  const [scanProgress, setScanProgress] = useState({ current: '', scanned: 0, total: 0, progress: 0, gems_found: 0 });
 
   // Available timeframes
   const timeframes = [
@@ -32,30 +34,63 @@ export default function App() {
 
 
 
-  // Scan Engine
+  // Scan Engine with Real-time Progress
   const runScan = async () => {
     setLoading(true);
     setStocks([]);
     setSelectedStock(null);
     setScanStatus("🚀 Initializing Scanner...");
+    setScanProgress({ current: '', scanned: 0, total: 0, progress: 0, gems_found: 0 });
     
     try {
-      setTimeout(() => setScanStatus("📡 Connecting to NSE Data Feed..."), 1000);
-      setTimeout(() => setScanStatus("🔍 Scanning Watchlist... (Takes ~30-60s)"), 2000);
-
-      const res = await axios.get('http://127.0.0.1:8000/api/bulk_scan'); 
+      const eventSource = new EventSource('http://127.0.0.1:8000/api/bulk_scan_stream');
       
-      if (res.data.gems && res.data.gems.length > 0) {
-        setStocks(res.data.gems);
-        setScanStatus(`✅ Scan Complete! Found ${res.data.gems.length} Gems.`);
-      } else {
-        setScanStatus("⚠️ No stocks matched Titan criteria today.");
-      }
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (data.type === 'start') {
+            setScanStatus(`🚀 Starting scan of ${data.total} stocks...`);
+            setScanProgress(prev => ({ ...prev, total: data.total }));
+          } else if (data.type === 'progress') {
+            setScanStatus(`🔍 Scanning: ${data.current.replace('.NS', '').replace('.BO', '')} (${data.scanned}/${data.total})`);
+            setScanProgress({
+              current: data.current,
+              scanned: data.scanned,
+              total: data.total,
+              progress: data.progress,
+              gems_found: data.gems_found
+            });
+          } else if (data.type === 'gem') {
+            setStocks(prev => [...prev, data.data]);
+            setScanProgress(prev => ({ ...prev, gems_found: data.gems_found }));
+          } else if (data.type === 'complete') {
+            setScanStatus(`✅ Scan Complete! Found ${data.gems_found} Gems out of ${data.total_scanned} scanned.`);
+            setScanProgress(prev => ({ ...prev, progress: 100 }));
+            eventSource.close();
+            setLoading(false);
+          } else if (data.type === 'error') {
+            setScanStatus(`❌ Error: ${data.message}`);
+            eventSource.close();
+            setLoading(false);
+          }
+        } catch (err) {
+          console.error("Parse error:", err);
+        }
+      };
+      
+      eventSource.onerror = (err) => {
+        console.error("EventSource error:", err);
+        setScanStatus("❌ Connection Error. Is Backend Running?");
+        eventSource.close();
+        setLoading(false);
+      };
+      
     } catch (err) {
       console.error("Scan Error:", err);
       setScanStatus("❌ Connection Error. Is Backend Running?");
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // Reset view mode when stock changes
@@ -212,12 +247,41 @@ export default function App() {
             {loading ? "SCANNING..." : "SCAN MARKET"}
           </button>
 
-          <div className="mt-2 flex items-center justify-between">
-            <div className="text-[10px] text-[#00CCFF] font-mono">{scanStatus || "Ready"}</div>
-            <div className="flex gap-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-[#00FF00]"></div>
-              <span className="text-[9px] text-[#666]">LIVE</span>
+          <div className="mt-2 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] text-[#00CCFF] font-mono">{scanStatus || "Ready"}</div>
+              <div className="flex gap-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#00FF00]"></div>
+                <span className="text-[9px] text-[#666]">LIVE</span>
+              </div>
             </div>
+            
+            {/* Progress Bar and Stats */}
+            {loading && scanProgress.total > 0 && (
+              <div className="space-y-1">
+                {/* Progress Bar */}
+                <div className="w-full bg-[#1A1A1A] rounded-full h-1.5 overflow-hidden">
+                  <div 
+                    className="bg-[#00CCFF] h-full transition-all duration-300 ease-out"
+                    style={{ width: `${scanProgress.progress}%` }}
+                  />
+                </div>
+                
+                {/* Stats */}
+                <div className="flex items-center justify-between text-[9px] text-[#888]">
+                  <div className="flex items-center gap-3">
+                    <span>📊 {scanProgress.scanned}/{scanProgress.total}</span>
+                    <span>💎 {scanProgress.gems_found} Gems</span>
+                    <span>{scanProgress.progress}%</span>
+                  </div>
+                  {scanProgress.current && (
+                    <span className="text-[#00CCFF] font-mono truncate max-w-[120px]">
+                      {scanProgress.current.replace('.NS', '').replace('.BO', '')}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -351,6 +415,19 @@ export default function App() {
                   {aiLoading ? 'ANALYZING...' : 'AI AUDIT'}
                 </button>
                 
+                {/* S&R Toggle Button */}
+                <button
+                  onClick={() => setShowSRLines(!showSRLines)}
+                  className={`px-3 py-2 rounded text-xs font-bold uppercase tracking-wider flex items-center gap-2 border transition-all
+                    ${showSRLines 
+                      ? 'bg-[#00FF00]/20 text-[#00FF00] border-[#00FF00]/40 hover:bg-[#00FF00]/30' 
+                      : 'bg-[#1A1A1A] text-[#666] border-[#1A1A1A] hover:bg-[#2A2A2A] hover:text-[#E0E0E0]'}`}
+                  title={showSRLines ? "Hide Support/Resistance" : "Show Support/Resistance"}
+                >
+                  <Target size={14} />
+                  {showSRLines ? 'S&R ON' : 'S&R OFF'}
+                </button>
+                
                 {/* Timeframe Selector */}
                 <div className="flex items-center gap-2">
                   <span className="text-[9px] text-[#666] uppercase mr-2">Timeframe:</span>
@@ -413,7 +490,7 @@ export default function App() {
                       symbol={selectedStock.symbol}
                       interval={timeframe}
                       data={selectedStock.chart_data || []}
-                      levels={selectedStock.sr_levels || { support: [], resistance: [] }}
+                      levels={showSRLines ? (selectedStock.sr_levels || { support: [], resistance: [] }) : { support: [], resistance: [] }}
                       mode={viewMode}
                     />
                   )}
