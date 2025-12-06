@@ -745,31 +745,36 @@ def bulk_scan_stream():
 @app.post("/api/chat")
 def chat_with_stock(request: ChatRequest):
     """
-    Contextual chat endpoint that answers questions about a stock using live technical data.
+    PRO CHAT: Answers technical questions using Live Data, Zones, Market Structure, and Price History.
+    Includes last 45 days of price action for pattern recognition (Double Top/Bottom, Flags, etc.)
     """
     try:
-        # Fetch stock data
+        # 1. Fetch Data
         df = fetch_stock_data(request.symbol, interval="1d")
         
         if df is None or df.empty:
             return {"reply": f"❌ Unable to fetch data for {request.symbol}. Please check the symbol and try again."}
         
-        # Extract latest technical data
+        # 2. Calculate Advanced Metrics
+        zones = calculate_supply_demand_zones(df)
+        structure = analyze_market_structure(df)
+        
+        # 3. Extract Price Data (Today & Yesterday)
         last_row = df.iloc[-1]
-        current_price = float(last_row['Close'])
+        prev_row = df.iloc[-2] if len(df) > 1 else last_row  # Yesterday
         
-        # Get indicators with null checks
-        rsi = None
-        if 'RSI' in df.columns and not pd.isna(last_row['RSI']):
-            rsi = round(float(last_row['RSI']), 2)
+        curr_price = float(last_row['Close'])
+        today_high = float(last_row['High'])
+        today_low = float(last_row['Low'])
         
-        ema50 = None
-        if 'EMA_50' in df.columns and not pd.isna(last_row['EMA_50']):
-            ema50 = round(float(last_row['EMA_50']), 2)
+        yest_close = float(prev_row['Close'])
+        yest_high = float(prev_row['High'])
+        yest_low = float(prev_row['Low'])
         
-        ema200 = None
-        if 'EMA_200' in df.columns and not pd.isna(last_row['EMA_200']):
-            ema200 = round(float(last_row['EMA_200']), 2)
+        # 4. Technical Indicators
+        rsi = round(float(last_row['RSI']), 2) if 'RSI' in df.columns and not pd.isna(last_row['RSI']) else "N/A"
+        ema50 = round(float(last_row['EMA_50']), 2) if 'EMA_50' in df.columns and not pd.isna(last_row['EMA_50']) else "N/A"
+        ema200 = round(float(last_row['EMA_200']), 2) if 'EMA_200' in df.columns and not pd.isna(last_row['EMA_200']) else "N/A"
         
         volume_spike = None
         if 'Volume' in df.columns and 'Vol_SMA' in df.columns:
@@ -778,21 +783,12 @@ def chat_with_stock(request: ChatRequest):
             if not pd.isna(vol) and not pd.isna(vol_sma) and vol_sma > 0:
                 volume_spike = round(vol / vol_sma, 2)
         
-        # Determine trend
-        trend = "Bullish"
-        if ema50 is not None:
-            trend = "Bullish" if current_price > ema50 else "Bearish"
-        
-        # Calculate supply/demand zones and market structure for context
-        zones = calculate_supply_demand_zones(df)
-        structure = analyze_market_structure(df)
-        
-        # Format zones for prompt
-        zones_text = ""
+        # 5. Format Zones Text
+        zones_text = "No major zones detected nearby."
         if zones and len(zones) > 0:
             zones_list = []
-            for zone in zones:
-                zone_type = "RESISTANCE" if zone.get('type', '').upper() == 'RESISTANCE' else "SUPPORT"
+            for zone in zones[:5]:  # Show top 5 zones
+                zone_type = zone.get('type', '').upper()
                 strength = zone.get('strength', 0)
                 bottom = zone.get('bottom', 0)
                 top = zone.get('top', 0)
@@ -805,54 +801,77 @@ def chat_with_stock(request: ChatRequest):
                 else:
                     strength_label = "Weak"
                 
-                zones_list.append(f"{zone_type} at ₹{bottom:.2f}-₹{top:.2f} ({strength_label}, {strength} touches)")
+                zones_list.append(f"{zone_type} at ₹{bottom:.2f}-₹{top:.2f} (Strength: {strength}, {strength_label})")
             
-            zones_text = "\n\n### SUPPLY/DEMAND ZONES:\n" + "\n".join(zones_list)
-        else:
-            zones_text = "\n\n### SUPPLY/DEMAND ZONES:\n- No significant zones detected nearby."
+            zones_text = "\n".join(zones_list)
         
-        # Construct prompt with all context
-        data_summary = f"Current Price: ₹{current_price:.2f}"
-        if rsi is not None:
-            data_summary += f"\n- RSI (14): {rsi}"
-        if ema50 is not None:
-            data_summary += f"\n- EMA 50: ₹{ema50:.2f}"
-        if ema200 is not None:
-            data_summary += f"\n- EMA 200: ₹{ema200:.2f}"
-        if volume_spike is not None:
-            data_summary += f"\n- Volume Spike: {volume_spike}x average"
-        data_summary += f"\n- Trend: {trend}"
-        data_summary += f"\n- Market Structure: {structure if structure else 'Not Available'}"
+        # 6. Format Price Action History (Last 45 Days) for Pattern Recognition
+        # Compact format: Date|Open|High|Low|Close
+        history_str = "Date|Open|High|Low|Close\n"
+        recent_df = df.tail(45).reset_index()
+        
+        for _, row in recent_df.iterrows():
+            # Find date column (could be 'Date' or index name)
+            date_val = None
+            if 'Date' in row:
+                date_val = row['Date']
+            elif hasattr(row, 'name') and row.name is not None:
+                date_val = row.name
+            else:
+                # Try to find datetime column
+                for col in recent_df.columns:
+                    if pd.api.types.is_datetime64_any_dtype(recent_df[col]):
+                        date_val = row[col]
+                        break
+            
+            if date_val is None:
+                date_str = str(row.name) if hasattr(row, 'name') else "N/A"
+            else:
+                date_str = pd.to_datetime(date_val).strftime('%Y-%m-%d')
+            
+            history_str += f"{date_str}|{row['Open']:.1f}|{row['High']:.1f}|{row['Low']:.1f}|{row['Close']:.1f}\n"
+        
+        # 7. MASTER PROMPT with Complete Context
+        prompt = f"""You are an expert Trading Assistant (Titan AI) for the Indian Stock Market (NSE). Answer based strictly on the data below.
+
+### 📊 LIVE MARKET DATA for {request.symbol}:
+
+- Current Price: ₹{curr_price:.2f}
+- Trend Structure: {structure if structure else 'Not Available'}
+- Today's Range: ₹{today_low:.2f} - ₹{today_high:.2f}
+- Yesterday's Range: ₹{yest_low:.2f} - ₹{yest_high:.2f} (Close: ₹{yest_close:.2f})
+- Indicators: RSI={rsi}, EMA50={ema50}, EMA200={ema200}
+{f"- Volume Spike: {volume_spike}x average" if volume_spike else ""}
+
+### 🧱 SUPPORT & RESISTANCE ZONES:
+
+{zones_text}
+
+### 📉 PRICE ACTION HISTORY (Last 45 Days - For Pattern/Wave Analysis):
+
+{history_str}
+
+### USER QUESTION: 
+"{request.question}"
+
+### INSTRUCTIONS:
+- If asked about Support/Resistance, quote the specific Zone levels provided above.
+- If asked about "Yesterday", use the Yesterday's Range data.
+- If asked about Patterns (Double Top/Bottom, Head & Shoulders, Flags, Triangles, etc.), analyze the 'Price Action History' table above.
+- If asked about Elliott Wave or price waves, look for Higher Highs, Lower Lows, and consolidation patterns in the history.
+- If asked about "nearest support", identify the closest SUPPORT zone below the current price (₹{curr_price:.2f}).
+- If asked about "nearest resistance", identify the closest RESISTANCE zone above the current price (₹{curr_price:.2f}).
+- Keep the answer short, professional, data-backed, and actionable.
+- Use the price history to identify chart patterns and trend structures."""
         
         # Debug logging
         print(f"\n📊 CHAT REQUEST DEBUG:")
         print(f"  Symbol: {request.symbol}")
         print(f"  Question: {request.question}")
-        print(f"  Current Price: ₹{current_price:.2f}")
-        print(f"  EMA 50: ₹{ema50:.2f}" if ema50 else "  EMA 50: None")
-        print(f"  EMA 200: ₹{ema200:.2f}" if ema200 else "  EMA 200: None")
+        print(f"  Current Price: ₹{curr_price:.2f}")
         print(f"  Structure: {structure}")
         print(f"  Zones found: {len(zones) if zones else 0}")
-        if zones:
-            for z in zones[:3]:
-                print(f"    - {z.get('type')}: ₹{z.get('bottom', 0):.2f}-₹{z.get('top', 0):.2f} (strength: {z.get('strength', 0)})")
-        
-        prompt = f"""You are a Trading Assistant for the Indian Stock Market (NSE). Here is the live data for {request.symbol}:
-
-### TECHNICAL DATA:
-{data_summary}
-{zones_text}
-
-### USER QUESTION:
-{request.question}
-
-### INSTRUCTIONS:
-- Answer specifically using the data provided above.
-- For support/resistance questions, refer to the SUPPLY/DEMAND ZONES listed above.
-- The current price is ₹{current_price:.2f} - use this as reference.
-- Be concise, professional, and focus on actionable insights.
-- If asked about "nearest support", identify the closest SUPPORT zone below the current price.
-- If asked about "nearest resistance", identify the closest RESISTANCE zone above the current price."""
+        print(f"  History data points: {len(recent_df)} days")
         
         # Check if API key is configured
         gemini_api_key = os.getenv('GEMINI_API_KEY')
@@ -867,6 +886,7 @@ def chat_with_stock(request: ChatRequest):
             # Debug: Log the prompt being sent (truncated for readability)
             print(f"\n📤 SENDING TO GEMINI (prompt length: {len(prompt)} chars):")
             print(f"  First 500 chars: {prompt[:500]}...")
+            print(f"  History section length: {len(history_str)} chars")
             
             response = model.generate_content(prompt)
             
@@ -884,4 +904,7 @@ def chat_with_stock(request: ChatRequest):
             return {"reply": f"❌ Error generating AI response: {str(e)}"}
             
     except Exception as e:
+        print(f"❌ Chat Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {"reply": f"❌ Error processing request: {str(e)}"}

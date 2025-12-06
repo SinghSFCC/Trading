@@ -120,8 +120,11 @@ export default function TitanChat({ symbol }) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area */}
-      <div className="flex gap-2 p-4 border-t border-[#1A1A1A] flex-shrink-0">
+      {/* Input Area - Fixed at bottom with proper z-index */}
+      <div 
+        className="flex gap-2 p-4 border-t border-[#1A1A1A] flex-shrink-0 bg-[#0A0A0A]"
+        style={{ zIndex: 200 }}
+      >
         <input
           type="text"
           value={inputText}

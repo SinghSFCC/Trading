@@ -458,35 +458,37 @@ export default function TitanChart({ symbol, interval = "1d", data = [], zones =
           <div className="w-full flex-1 min-h-[400px] relative">
             <div ref={chartContainerRef} className="w-full h-full" />
             
-            {/* Zoom Controls - Right Side Bottom Bar */}
+            {/* Zoom Controls - Center Bottom (TradingView style) */}
             <div 
-              className="absolute bottom-0 right-0 flex items-center justify-end px-4 py-2 bg-transparent"
+              className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center justify-center bg-transparent"
               style={{ 
                 zIndex: 100,
                 pointerEvents: 'auto'
               }}
             >
-            {/* Right Side Zoom Controls */}
-            <div className="flex items-center gap-2" style={{ pointerEvents: 'auto' }}>
+            {/* Center Bottom Zoom Controls */}
+            <div className="flex items-center gap-2 bg-black/40 backdrop-blur-md rounded-lg p-1 border border-white/10 shadow-lg" style={{ pointerEvents: 'auto' }}>
               <button
                 onClick={handleZoomIn}
-                className="p-2 bg-black/30 hover:bg-black/50 backdrop-blur-md text-white/90 hover:text-white rounded transition-all flex items-center justify-center cursor-pointer border border-white/10 hover:border-white/20 shadow-lg"
+                className="p-2 hover:bg-black/50 text-white/90 hover:text-white rounded transition-all flex items-center justify-center cursor-pointer hover:bg-white/10"
                 title="Zoom In (+)"
                 type="button"
               >
                 <ZoomIn size={18} />
               </button>
+              <div className="w-px h-6 bg-white/20"></div>
               <button
                 onClick={handleZoomOut}
-                className="p-2 bg-black/30 hover:bg-black/50 backdrop-blur-md text-white/90 hover:text-white rounded transition-all flex items-center justify-center cursor-pointer border border-white/10 hover:border-white/20 shadow-lg"
+                className="p-2 hover:bg-black/50 text-white/90 hover:text-white rounded transition-all flex items-center justify-center cursor-pointer hover:bg-white/10"
                 title="Zoom Out (-)"
                 type="button"
               >
                 <ZoomOut size={18} />
               </button>
+              <div className="w-px h-6 bg-white/20"></div>
               <button
                 onClick={handleResetZoom}
-                className="p-2 bg-black/30 hover:bg-black/50 backdrop-blur-md text-white/90 hover:text-white rounded transition-all flex items-center justify-center cursor-pointer border border-white/10 hover:border-white/20 shadow-lg"
+                className="p-2 hover:bg-black/50 text-white/90 hover:text-white rounded transition-all flex items-center justify-center cursor-pointer hover:bg-white/10"
                 title="Reset Zoom (Fit Content)"
                 type="button"
               >
