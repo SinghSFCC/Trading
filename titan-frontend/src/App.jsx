@@ -32,6 +32,22 @@ export default function App() {
     { value: "1mo", label: "1 Month" },
   ];
 
+  // Fetches the latest price for a single stock to ensure data is fresh
+  const fetchStockPrice = async (symbol) => {
+    try {
+      // Use the existing chart endpoint, which also returns the latest price
+      const res = await axios.get(`http://127.0.0.1:8000/api/chart/${symbol}`, {
+        params: { interval: '1d' } // A default interval is fine
+      });
+      if (res.data && res.data.current_price) {
+        return res.data.current_price;
+      }
+    } catch (error) {
+      // Log error but don't block the UI
+      console.error(`Failed to fetch latest price for ${symbol}:`, error);
+    }
+    return null; // Return null if fetch fails
+  };
 
 
   // Scan Engine with Real-time Progress
@@ -45,7 +61,7 @@ export default function App() {
     try {
       const eventSource = new EventSource('http://127.0.0.1:8000/api/bulk_scan_stream');
       
-      eventSource.onmessage = (event) => {
+      eventSource.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data);
           
@@ -62,8 +78,27 @@ export default function App() {
               gems_found: data.gems_found
             });
           } else if (data.type === 'gem') {
-            setStocks(prev => [...prev, data.data]);
+            const stock = data.data;
+            // Gem found, now fetch its definitive price before adding to watchlist
+            const latestPrice = await fetchStockPrice(stock.symbol);
+
+            const finalStock = {
+              ...stock,
+              // Use the freshly fetched price, fall back to stream price if fetch fails
+              current_price: latestPrice || stock.current_price,
+            };
+
+            // Debug: Log each gem being added with its final price
+            console.log('💎 Gem Added to Watchlist:', {
+              symbol: finalStock.symbol,
+              price: finalStock.current_price,
+              source_price: stock.current_price,
+              is_updated: !!latestPrice
+            });
+
+            setStocks(prev => [...prev, finalStock]);
             setScanProgress(prev => ({ ...prev, gems_found: data.gems_found }));
+
           } else if (data.type === 'complete') {
             setScanStatus(`✅ Scan Complete! Found ${data.gems_found} Gems out of ${data.total_scanned} scanned.`);
             setScanProgress(prev => ({ ...prev, progress: 100 }));
@@ -118,12 +153,43 @@ export default function App() {
       });
       
       if (res.data && res.data.data) {
+        // Debug: Log the data being received
+        const lastCandle = res.data.data[res.data.data.length - 1];
+        console.log('📊 Chart Data Received:', {
+          symbol: res.data.symbol,
+          dataCount: res.data.data.length,
+          currentPriceFromAPI: res.data.current_price,
+          lastCandleClose: lastCandle?.close,
+          lastCandleHigh: lastCandle?.high,
+          lastCandleLow: lastCandle?.low,
+          zones: res.data.zones?.length || 0,
+          structure: res.data.structure
+        });
+        
+        // Get the correct price from chart data
+        const correctPrice = res.data.current_price || lastCandle?.close;
+        
+        // Update the stock in the watchlist array if price changed
+        setStocks(prevStocks => {
+          return prevStocks.map(s => {
+            if (s.symbol === res.data.symbol && correctPrice && s.current_price !== correctPrice) {
+              console.log(`💰 Price update for ${res.data.symbol}: ${s.current_price} → ${correctPrice}`);
+              return { ...s, current_price: correctPrice };
+            }
+            return s;
+          });
+        });
+        
+        // Update selected stock
         setSelectedStock(prev => ({
           ...prev,
           chart_data: res.data.data,
           current_timeframe: interval,
-          // Preserve or update sr_levels and has_tradingview from chart endpoint
-          sr_levels: res.data.sr_levels || prev?.sr_levels || { support: [], resistance: [] },
+          // Update current_price from chart data to ensure consistency
+          current_price: correctPrice || prev?.current_price,
+          // Extract zones and structure from API response
+          zones: res.data.zones || prev?.zones || [],
+          structure: res.data.structure || prev?.structure || "",
           has_tradingview: res.data.has_tradingview !== undefined ? res.data.has_tradingview : (prev?.has_tradingview || false)
         }));
       }
@@ -490,8 +556,8 @@ export default function App() {
                       symbol={selectedStock.symbol}
                       interval={timeframe}
                       data={selectedStock.chart_data || []}
-                      levels={showSRLines ? (selectedStock.sr_levels || { support: [], resistance: [] }) : { support: [], resistance: [] }}
-                      mode={viewMode}
+                      zones={showSRLines ? (selectedStock.zones || []) : []}
+                      structure={selectedStock.structure || ""}
                     />
                   )}
 

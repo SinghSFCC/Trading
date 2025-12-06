@@ -1,49 +1,18 @@
 import { useEffect, useRef } from 'react';
-import { AdvancedRealTimeChart } from 'react-ts-tradingview-widgets';
-import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
-export default function TitanChart({ symbol, interval = "1d", data = [], levels = { support: [], resistance: [] }, mode = 'titan' }) {
+export default function TitanChart({ symbol, interval = "1d", data = [], zones = [], structure = "" }) {
   const chartContainerRef = useRef();
   const chartInstance = useRef(null);
   const candleSeriesRef = useRef(null);
-  const priceLinesRef = useRef([]);
+  const ema50SeriesRef = useRef(null);
+  const ema200SeriesRef = useRef(null);
+  const zoneLinesRef = useRef([]);
 
-  // Parse symbol from backend format to TradingView format
-  const parseSymbol = (symbol) => {
-    if (!symbol) return 'NSE:NIFTY';
-    
-    if (symbol.endsWith('.NS')) {
-      const baseSymbol = symbol.replace('.NS', '');
-      return `NSE:${baseSymbol}`;
-    }
-    
-    if (symbol.endsWith('.BO')) {
-      const baseSymbol = symbol.replace('.BO', '');
-      return `BSE:${baseSymbol}`;
-    }
-    
-    return 'NSE:NIFTY';
-  };
-
-  // Map interval from App.jsx format to TradingView format
-  const mapInterval = (interval) => {
-    const intervalMap = {
-      '1m': '1',
-      '5m': '5',
-      '15m': '15',
-      '30m': '30',
-      '1h': '60',
-      '1d': 'D',
-      '1wk': 'W',
-      '1mo': 'M'
-    };
-    return intervalMap[interval] || 'D';
-  };
-
-  // Initialize lightweight-charts for Titan mode
+  // Initialize lightweight-charts
   useEffect(() => {
-    if (mode === 'titan' && data && data.length > 0 && chartContainerRef.current) {
+    if (data && data.length > 0 && chartContainerRef.current) {
       // Prevent duplicate initialization
       if (chartInstance.current) {
         return;
@@ -144,12 +113,36 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
         // Process and set data
         const isIntraday = interval && ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"].includes(interval);
         
+        // Debug: Log first and last data points
+        if (data && data.length > 0) {
+          console.log('📊 Chart Data Processing:', {
+            totalDataPoints: data.length,
+            firstPoint: {
+              open: data[0].Open || data[0].open,
+              high: data[0].High || data[0].high,
+              low: data[0].Low || data[0].low,
+              close: data[0].Close || data[0].close
+            },
+            lastPoint: {
+              open: data[data.length - 1].Open || data[data.length - 1].open,
+              high: data[data.length - 1].High || data[data.length - 1].high,
+              low: data[data.length - 1].Low || data[data.length - 1].low,
+              close: data[data.length - 1].Close || data[data.length - 1].close
+            }
+          });
+        }
+        
         const cleanData = data
           .map(d => {
             const open = Number(d.Open || d.open || 0);
             const high = Number(d.High || d.high || 0);
             const low = Number(d.Low || d.low || 0);
             const close = Number(d.Close || d.close || 0);
+            
+            // Debug: Log any suspicious values
+            if (open > 10000 || high > 10000 || low > 10000 || close > 10000) {
+              console.warn('⚠️ Suspiciously high price value detected:', { open, high, low, close, data: d });
+            }
             
             if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close) || 
                 open === 0 || high === 0 || low === 0 || close === 0) {
@@ -197,55 +190,56 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
           chart.timeScale().fitContent();
         }
 
-        // Store chart instance only if not already set
-        if (!chartInstance.current) {
-          chartInstance.current = chart;
-          candleSeriesRef.current = candleSeries;
-        }
+        // Add EMA indicators if data contains them
+        const ema50Data = [];
+        const ema200Data = [];
         
-        // Add support/resistance lines immediately after chart is created
-        if (levels && (levels.support?.length > 0 || levels.resistance?.length > 0)) {
-          // Add support lines (green)
-          if (levels.support && Array.isArray(levels.support)) {
-            levels.support.forEach(price => {
-              if (typeof price === 'number' && price > 0) {
-                try {
-                  const priceLine = candleSeries.createPriceLine({
-                    price: price,
-                    color: '#00FF00',
-                    lineWidth: 3,
-                    lineStyle: 2, // Dashed
-                    axisLabelVisible: true,
-                    title: `S: ${price.toFixed(2)}`,
-                  });
-                  priceLinesRef.current.push(priceLine);
-                } catch (e) {
-                  console.warn('Failed to create support line:', e);
-                }
-              }
-            });
+        cleanData.forEach((candle, idx) => {
+          const originalData = data.find(d => {
+            const dTime = d.time || d.Date || d.date;
+            return dTime === candle.time;
+          });
+          
+          if (originalData) {
+            if (originalData.ema_50 !== undefined && originalData.ema_50 !== null) {
+              ema50Data.push({
+                time: candle.time,
+                value: Number(originalData.ema_50)
+              });
+            }
+            if (originalData.ema_200 !== undefined && originalData.ema_200 !== null) {
+              ema200Data.push({
+                time: candle.time,
+                value: Number(originalData.ema_200)
+              });
+            }
           }
-          // Add resistance lines (red)
-          if (levels.resistance && Array.isArray(levels.resistance)) {
-            levels.resistance.forEach(price => {
-              if (typeof price === 'number' && price > 0) {
-                try {
-                  const priceLine = candleSeries.createPriceLine({
-                    price: price,
-                    color: '#FF0000',
-                    lineWidth: 3,
-                    lineStyle: 2, // Dashed
-                    axisLabelVisible: true,
-                    title: `R: ${price.toFixed(2)}`,
-                  });
-                  priceLinesRef.current.push(priceLine);
-                } catch (e) {
-                  console.warn('Failed to create resistance line:', e);
-                }
-              }
-            });
-          }
+        });
+
+        // Add EMA 50 line (Blue)
+        if (ema50Data.length > 0) {
+          const ema50Series = chart.addSeries(LineSeries, {
+            color: '#3B82F6',
+            lineWidth: 2,
+            title: 'EMA 50',
+          });
+          ema50Series.setData(ema50Data);
+          ema50SeriesRef.current = ema50Series;
         }
+
+        // Add EMA 200 line (Orange)
+        if (ema200Data.length > 0) {
+          const ema200Series = chart.addSeries(LineSeries, {
+            color: '#F97316',
+            lineWidth: 2,
+            title: 'EMA 200',
+          });
+          ema200Series.setData(ema200Data);
+          ema200SeriesRef.current = ema200Series;
+        }
+
+        // Store chart instance
+        chartInstance.current = chart;
 
         // Window resize handler
         const handleResize = () => {
@@ -280,68 +274,70 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
           }
           chartInstance.current = null;
           candleSeriesRef.current = null;
-          priceLinesRef.current = [];
+          ema50SeriesRef.current = null;
+          ema200SeriesRef.current = null;
+          zoneLinesRef.current = [];
         }
       };
     }
-  }, [mode, data, interval]);
+  }, [data, interval]);
 
-  // Add support/resistance lines when levels change
+  // Draw zones when zones prop changes
   useEffect(() => {
-    if (mode === 'titan' && candleSeriesRef.current && chartInstance.current) {
-      // Remove existing price lines first
-      priceLinesRef.current.forEach(line => {
+    if (candleSeriesRef.current && zones && Array.isArray(zones) && zones.length > 0) {
+      // Remove existing zone lines
+      zoneLinesRef.current.forEach(line => {
         try {
           candleSeriesRef.current.removePriceLine(line);
         } catch (e) {
           // Ignore errors during cleanup
         }
       });
-      priceLinesRef.current = [];
+      zoneLinesRef.current = [];
 
-      // Add support lines (green)
-      if (levels.support && Array.isArray(levels.support)) {
-        levels.support.forEach(price => {
-          if (typeof price === 'number' && price > 0) {
-            try {
-              const priceLine = candleSeriesRef.current.createPriceLine({
-                price: price,
-                color: '#00FF00',
-                lineWidth: 3,
-                lineStyle: 2, // Dashed
-                axisLabelVisible: true,
-                title: `S: ${price.toFixed(2)}`,
-              });
-              priceLinesRef.current.push(priceLine);
-            } catch (e) {
-              console.warn('Failed to create support line:', e);
-            }
-          }
-        });
-      }
+      // Draw zones - Two lines per zone (top and bottom)
+      zones.forEach(zone => {
+        if (!zone || typeof zone.top !== 'number' || typeof zone.bottom !== 'number') {
+          return;
+        }
 
-      // Add resistance lines (red)
-      if (levels.resistance && Array.isArray(levels.resistance)) {
-        levels.resistance.forEach(price => {
-          if (typeof price === 'number' && price > 0) {
-            try {
-              const priceLine = candleSeriesRef.current.createPriceLine({
-                price: price,
-                color: '#FF0000',
-                lineWidth: 3,
-                lineStyle: 2, // Dashed
-                axisLabelVisible: true,
-                title: `R: ${price.toFixed(2)}`,
-              });
-              priceLinesRef.current.push(priceLine);
-            } catch (e) {
-              console.warn('Failed to create resistance line:', e);
-            }
-          }
-        });
-      }
+        const zoneType = zone.type?.toUpperCase() || '';
+        const strength = zone.strength || 0;
+        
+        // Determine colors based on zone type
+        const zoneColor = zoneType === 'RESISTANCE' ? '#EF4444' : '#22C55E';
+        const zoneLabel = zoneType === 'RESISTANCE' 
+          ? (strength > 0 ? `RES ${strength}x` : 'RES ZONE')
+          : (strength > 0 ? `SUP ${strength}x` : 'SUP ZONE');
+
+        try {
+          // Top line with label (title only, no axis label)
+          const topLine = candleSeriesRef.current.createPriceLine({
+            price: zone.top,
+            color: zoneColor,
+            lineWidth: 3,
+            lineStyle: 2, // Dashed
+            axisLabelVisible: false,
+            title: zoneLabel,
+          });
+          zoneLinesRef.current.push(topLine);
+
+          // Bottom line without label
+          const bottomLine = candleSeriesRef.current.createPriceLine({
+            price: zone.bottom,
+            color: zoneColor,
+            lineWidth: 3,
+            lineStyle: 2, // Dashed
+            axisLabelVisible: false,
+            title: '',
+          });
+          zoneLinesRef.current.push(bottomLine);
+        } catch (e) {
+          console.warn('Failed to create zone lines:', e);
+        }
+      });
     }
-  }, [mode, levels]);
+  }, [zones]);
 
   // Zoom functions for lightweight-charts
   const handleZoomIn = () => {
@@ -454,35 +450,7 @@ export default function TitanChart({ symbol, interval = "1d", data = [], levels 
     }
   };
 
-  // Render based on mode
-  if (mode === 'tradingview') {
-    return (
-      <div className="w-full h-full min-h-[400px] relative">
-        <AdvancedRealTimeChart
-          symbol={parseSymbol(symbol)}
-          theme="dark"
-          autosize={true}
-          interval={mapInterval(interval)}
-          timezone="Asia/Kolkata"
-          style="1"
-          hide_side_toolbar={false}
-          details={true}
-          withdateranges={true}
-          allow_symbol_change={true}
-          studies={[
-            'RSI@tv-basicstudies',
-            'MASimple@tv-basicstudies',
-            'Volume@tv-basicstudies'
-          ]}
-          studies_overrides={{
-            'MASimple.length': 50
-          }}
-        />
-      </div>
-    );
-  }
-
-  // Titan mode (lightweight-charts with support/resistance)
+  // Titan mode (lightweight-charts with zones and EMAs)
   return (
     <div className="w-full h-full min-h-[400px] relative flex flex-col">
       {data && data.length > 0 ? (

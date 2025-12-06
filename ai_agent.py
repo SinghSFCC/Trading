@@ -53,9 +53,9 @@ if not GEMINI_API_KEY:
 else:
     genai.configure(api_key=GEMINI_API_KEY)
 
-def audit_stock(symbol, price, rsi, volume_x, recent_trend):
+def audit_stock(symbol, price, rsi, volume_x, recent_trend, zones=None, structure=None, history_str=None):
     """
-    Sends stock data to Gemini 2.0 Flash for a Swing Trading Audit.
+    Sends stock data to Gemini 2.0 Flash for a Swing Trading Audit with Supply/Demand Zones and Market Structure.
     """
     # Check if API key is configured
     if not GEMINI_API_KEY:
@@ -72,6 +72,35 @@ def audit_stock(symbol, price, rsi, volume_x, recent_trend):
     # Using the latest fast model available to your key
     model = genai.GenerativeModel('gemini-2.0-flash')
 
+    # Format zones for prompt - Convert to readable string
+    zones_text = ""
+    if zones and len(zones) > 0:
+        zones_list = []
+        for zone in zones:
+            zone_type = "RESISTANCE" if zone.get('type', '').upper() == 'RESISTANCE' else "SUPPORT"
+            strength = zone.get('strength', 0)
+            bottom = zone.get('bottom', 0)
+            top = zone.get('top', 0)
+            
+            # Determine strength label
+            if strength >= 4:
+                strength_label = "Strong"
+            elif strength >= 3:
+                strength_label = "Medium"
+            else:
+                strength_label = "Weak"
+            
+            zones_list.append(f"{zone_type} at {bottom:.2f}-{top:.2f} ({strength_label})")
+        
+        zones_text = "\n### SUPPLY/DEMAND ZONES:\n" + ", ".join(zones_list) + "\n"
+    else:
+        zones_text = "\n### SUPPLY/DEMAND ZONES:\n- No significant zones detected nearby.\n"
+
+    # Format price history
+    history_section = ""
+    if history_str:
+        history_section = f"\n### PRICE ACTION HISTORY (Last 45 Days):\n{history_str}\n"
+
     prompt = f"""
     Act as a strict Hedge Fund Manager trading the Indian Stock Market (NSE). 
     Review this swing trading setup for stock: {symbol}
@@ -82,8 +111,17 @@ def audit_stock(symbol, price, rsi, volume_x, recent_trend):
     - Volume Spike: {volume_x}x average (Needs to be > 1.5x for conviction)
     - Recent Trend (Last 5 days close): {recent_trend}
 
-    ### YOUR JOB:
-    Analyze this data based on Mark Minervini's VCP (Volatility Contraction Pattern) and Momentum rules.
+    ### MARKET STRUCTURE:
+    - Trend Structure: {structure if structure else "Not Available"}
+
+    {zones_text}
+    {history_section}
+    ### YOUR MISSION:
+    1. Analyze the Price History for patterns (VCP, Flags, Double Bottoms).
+    2. Check if the current price is reacting to a Key Zone.
+    3. If price is at a Supply Zone with bearish candle → Signal SELL/WAIT.
+    4. If price is at a Demand Zone with bullish candle → Signal BUY.
+    5. Combine Structure + Zones + Momentum to give a Verdict.
     
     ### OUTPUT FORMAT (Strict JSON):
     Return ONLY a JSON object with these exact keys. Do not use markdown code blocks.

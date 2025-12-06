@@ -9,10 +9,11 @@ import pandas as pd
 import time
 import random
 import numpy as np
-from scipy.signal import find_peaks
 import json
 # Import our new AI Agent
 from ai_agent import audit_stock
+# Import core algorithms for zones and market structure
+from core.algorithms import calculate_supply_demand_zones, analyze_market_structure
 import google.generativeai as genai
 import os
 
@@ -39,10 +40,17 @@ def fetch_stock_data(symbol, interval="1d"):
     # Throttling to prevent 401 Errors
     time.sleep(random.uniform(0.5, 1.5))
     
+    # CRITICAL: Create a fresh copy of symbol to avoid any reference issues
+    symbol_copy = str(symbol)
+    
     for attempt in range(2): 
         try:
-            if not symbol.endswith(".NS") and not symbol.endswith(".BO"):
-                symbol += ".NS"
+            if not symbol_copy.endswith(".NS") and not symbol_copy.endswith(".BO"):
+                symbol_copy += ".NS"
+            
+            # Debug: Log which symbol we're fetching
+            if attempt == 0:
+                print(f"🔍 Fetching data for: {symbol_copy}")
             
             # Fetch Data - Handle different intervals
             # Yahoo Finance limits:
@@ -59,7 +67,15 @@ def fetch_stock_data(symbol, interval="1d"):
             else:
                 period = "max"  # Daily/weekly/monthly can get max data
             
-            df = yf.download(symbol, period=period, interval=interval, progress=False, auto_adjust=True, timeout=30)
+            # CRITICAL: Download with explicit symbol to avoid any caching issues
+            df = yf.download(symbol_copy, period=period, interval=interval, progress=False, auto_adjust=True, timeout=30)
+            
+            # CRITICAL: If MultiIndex columns, extract the symbol-specific data
+            if isinstance(df.columns, pd.MultiIndex):
+                # If we have multiple symbols (shouldn't happen, but just in case)
+                if len(df.columns.levels[1]) > 1:
+                    print(f"⚠️ WARNING: Multiple symbols in response for {symbol_copy}, using first")
+                df.columns = df.columns.get_level_values(0)
             
             # Need at least 50 data points
             if df.empty or len(df) < 50: 
@@ -69,7 +85,8 @@ def fetch_stock_data(symbol, interval="1d"):
             # Debug: Log data range to see what we're getting
             if len(df) > 0:
                 days_span = (df.index[-1] - df.index[0]).days if len(df) > 1 else 0
-                print(f"📈 Fetched {len(df)} {interval} candles for {symbol} | Range: {df.index[0]} to {df.index[-1]} | Span: ~{days_span} days")
+                last_close = float(df['Close'].iloc[-1]) if 'Close' in df.columns else 0
+                print(f"📈 Fetched {len(df)} {interval} candles for {symbol_copy} | Range: {df.index[0]} to {df.index[-1]} | Span: ~{days_span} days | Last Close: ₹{last_close:.2f}")
 
             # Clean Data
             if isinstance(df.columns, pd.MultiIndex):
@@ -178,7 +195,7 @@ def fetch_stock_data(symbol, interval="1d"):
             print(f"❌ Error fetching {symbol} with interval {interval}: {str(e)[:100]}")
             time.sleep(1)
             continue
-            
+    
     return None
 
 def check_titan_criteria(df):
@@ -208,122 +225,6 @@ def check_titan_criteria(df):
         pass
     return "WAIT"
 
-def calculate_sr_levels(df):
-    """
-    Calculate support and resistance levels using scipy.signal.find_peaks
-    Returns: {"support": [float, ...], "resistance": [float, ...]}
-    """
-    try:
-        if df is None or len(df) < 50:
-            return {"support": [], "resistance": []}
-        
-        # Get price data
-        high_prices = df['High'].values
-        low_prices = df['Low'].values
-        close_prices = df['Close'].values
-        
-        # Calculate price range for prominence threshold (2% of price range)
-        price_range = np.max(close_prices) - np.min(close_prices)
-        prominence_threshold = price_range * 0.02  # 2% of price range
-        
-        # Minimum distance between peaks (20 data points)
-        min_distance = min(20, len(df) // 10)
-        
-        # Find resistance levels (peaks in High prices)
-        resistance_peaks, resistance_properties = find_peaks(
-            high_prices,
-            prominence=prominence_threshold,
-            distance=min_distance
-        )
-        
-        # Find support levels (peaks in inverted Low prices, then invert back)
-        # We invert because find_peaks finds maxima, so we invert to find minima
-        inverted_lows = -low_prices
-        support_peaks, support_properties = find_peaks(
-            inverted_lows,
-            prominence=prominence_threshold,
-            distance=min_distance
-        )
-        
-        # Get current price (last close price)
-        current_price = float(close_prices[-1])
-        
-        # Filter range: Only include levels within 20% above/below current price
-        # This ensures we only show levels where price can realistically move
-        price_range_percent = 0.20  # 20% range
-        min_price = current_price * (1 - price_range_percent)
-        max_price = current_price * (1 + price_range_percent)
-        
-        # Extract resistance prices (from High) and filter by proximity to current price
-        resistance_levels = []
-        resistance_prominences_list = []
-        resistance_prominences = resistance_properties.get('prominences', [])
-        for i, idx in enumerate(resistance_peaks):
-            price = float(high_prices[idx])
-            # Only include resistance levels above current price and within range
-            if min_price <= price <= max_price and price > current_price:
-                resistance_levels.append(price)
-                # Get prominence for this level
-                if i < len(resistance_prominences):
-                    resistance_prominences_list.append(resistance_prominences[i])
-                else:
-                    resistance_prominences_list.append(0)
-        
-        # Extract support prices (from Low) and filter by proximity to current price
-        support_levels = []
-        support_prominences_list = []
-        support_prominences = support_properties.get('prominences', [])
-        for i, idx in enumerate(support_peaks):
-            price = float(low_prices[idx])
-            # Only include support levels below current price and within range
-            if min_price <= price <= max_price and price < current_price:
-                support_levels.append(price)
-                # Get prominence for this level
-                if i < len(support_prominences):
-                    support_prominences_list.append(support_prominences[i])
-                else:
-                    support_prominences_list.append(0)
-        
-        # Sort by prominence and limit to top 3 strongest levels near current price
-        if len(resistance_levels) > 0:
-            if len(resistance_prominences_list) > 0:
-                sorted_resistance = sorted(
-                    zip(resistance_levels, resistance_prominences_list),
-                    key=lambda x: x[1],
-                    reverse=True
-                )
-                resistance_levels = [level[0] for level in sorted_resistance[:3]]
-            else:
-                # Sort by distance from current price (closest first)
-                resistance_levels = sorted(
-                    [r for r in resistance_levels if r > current_price],
-                    key=lambda x: abs(x - current_price)
-                )[:3]
-        
-        if len(support_levels) > 0:
-            if len(support_prominences_list) > 0:
-                sorted_support = sorted(
-                    zip(support_levels, support_prominences_list),
-                    key=lambda x: x[1],
-                    reverse=True
-                )
-                support_levels = [level[0] for level in sorted_support[:3]]
-            else:
-                # Sort by distance from current price (closest first)
-                support_levels = sorted(
-                    [s for s in support_levels if s < current_price],
-                    key=lambda x: abs(x - current_price)
-                )[:3]
-        
-        return {
-            "support": support_levels,
-            "resistance": resistance_levels
-        }
-        
-    except Exception as e:
-        print(f"⚠️ Support/Resistance calculation error: {str(e)[:100]}")
-        return {"support": [], "resistance": []}
-
 # --- API ENDPOINTS ---
 
 @app.get("/")
@@ -337,8 +238,9 @@ def scan_stock(symbol: str, interval: str = "1d"):
     if df is None:
         raise HTTPException(status_code=404, detail="Data Not Found")
     
-    # Calculate support/resistance levels
-    sr_levels = calculate_sr_levels(df)
+    # Calculate supply/demand zones and market structure
+    zones = calculate_supply_demand_zones(df)
+    structure = analyze_market_structure(df)
     
     # Check if TradingView is supported (ends with .NS or .BO)
     has_tradingview = symbol.endswith(".NS") or symbol.endswith(".BO")
@@ -347,7 +249,8 @@ def scan_stock(symbol: str, interval: str = "1d"):
         "status": "OK",
         "symbol": symbol,
         "interval": interval,
-        "sr_levels": sr_levels,
+        "zones": zones,
+        "structure": structure,
         "has_tradingview": has_tradingview
     }
 
@@ -370,8 +273,43 @@ def get_ai_audit(symbol: str, interval: str = "1d"):
     # Recent Trend (Last 5 data points)
     recent_trend = df['Close'].tail(5).to_list()
     
-    # Call Gemini Agent
-    return audit_stock(symbol, curr_price, rsi, vol_x, recent_trend)
+    # Calculate supply/demand zones and market structure
+    zones = calculate_supply_demand_zones(df)
+    structure = analyze_market_structure(df)
+    
+    # Format last 45 days of OHLC data as text table
+    history_df = df.tail(45).reset_index()
+    history_str = "Date | Open | Close\n"
+    for _, row in history_df.iterrows():
+        # Find date column (could be 'Date' or index name)
+        date_val = None
+        if 'Date' in row:
+            date_val = row['Date']
+        elif hasattr(row, 'name') and row.name is not None:
+            date_val = row.name
+        else:
+            # Try to find datetime column
+            for col in history_df.columns:
+                if pd.api.types.is_datetime64_any_dtype(history_df[col]):
+                    date_val = row[col]
+                    break
+        
+        if date_val is None:
+            date_str = str(row.name) if hasattr(row, 'name') else "N/A"
+        else:
+            date_str = pd.to_datetime(date_val).strftime('%Y-%m-%d')
+        
+        history_str += f"{date_str} | {row['Open']:.2f} | {row['Close']:.2f}\n"
+    
+    # Call Gemini Agent with new context
+    audit_result = audit_stock(symbol, curr_price, rsi, vol_x, recent_trend, zones, structure, history_str)
+    
+    # Include zones and structure in response for frontend
+    return {
+        **audit_result,
+        "zones": zones,
+        "structure": structure
+    }
 
 @app.get("/api/chart/{symbol}")
 def get_chart_data(symbol: str, interval: str = "1d"):
@@ -516,18 +454,47 @@ def get_chart_data(symbol: str, interval: str = "1d"):
         rsi_values = [d['rsi'] for d in chart_data if 'rsi' in d and 0 <= d['rsi'] <= 100]
         print(f"📊 RSI value range: {min(rsi_values):.2f} - {max(rsi_values):.2f}")
     
-    # Calculate support/resistance levels
-    sr_levels = calculate_sr_levels(df)
+    # Calculate supply/demand zones and market structure
+    zones = calculate_supply_demand_zones(df)
+    structure = analyze_market_structure(df)
+    
+    # Get current price from the ORIGINAL dataframe (before tail/limit operations)
+    # This ensures we get the actual most recent price, not from limited chart data
+    current_price = float(df['Close'].iloc[-1]) if len(df) > 0 else 0
+    
+    # Debug: Log price information
+    if len(chart_data) > 0:
+        last_candle = chart_data[-1]
+        print(f"\n📊 CHART DATA DEBUG for {symbol}:")
+        print(f"  Original DF length: {len(df)}")
+        print(f"  Original DF last date: {df.index[-1]}")
+        print(f"  Original DF last Close: ₹{df['Close'].iloc[-1]:.2f}")
+        print(f"  Chart data length: {len(chart_data)}")
+        print(f"  Last candle Close: ₹{last_candle.get('close', 0):.2f}")
+        print(f"  Last candle High: ₹{last_candle.get('high', 0):.2f}")
+        print(f"  Last candle Low: ₹{last_candle.get('low', 0):.2f}")
+        print(f"  Current Price (from DF): ₹{current_price:.2f}")
+        if len(chart_data) > 1:
+            first_candle = chart_data[0]
+            print(f"  First candle Close: ₹{first_candle.get('close', 0):.2f}")
+            print(f"  Price range in chart: ₹{min([c.get('low', 0) for c in chart_data]):.2f} - ₹{max([c.get('high', 0) for c in chart_data]):.2f}")
+        
+        # Validate: Chart's last candle should match DF's last close (within rounding)
+        chart_last_close = last_candle.get('close', 0)
+        if abs(chart_last_close - current_price) > 0.01:
+            print(f"  ⚠️ WARNING: Price mismatch! Chart last: ₹{chart_last_close:.2f}, DF last: ₹{current_price:.2f}")
     
     # Check if TradingView is supported (ends with .NS or .BO)
     has_tradingview = symbol.endswith(".NS") or symbol.endswith(".BO")
-    
+
     return {
         "symbol": symbol,
         "interval": interval,
         "data": chart_data,
         "count": len(chart_data),
-        "sr_levels": sr_levels,
+        "current_price": current_price,  # Include current price in response
+        "zones": zones,
+        "structure": structure,
         "has_tradingview": has_tradingview
     }
 
@@ -549,10 +516,42 @@ def bulk_scan():
 
         def scan_single(stock):
             try:
-                df = fetch_stock_data(stock)
-                if df is not None:
+                # Use same interval as chart endpoint to ensure consistency
+                df = fetch_stock_data(stock, interval="1d")
+                if df is not None and len(df) > 0:
+                    # Validate that we have recent data (within last 7 days)
+                    last_date = pd.to_datetime(df.index[-1])
+                    today = pd.Timestamp.now().normalize()
+                    days_old = (today - last_date).days
+                    
+                    if days_old > 7:
+                        print(f"⚠️ {stock}: Data is {days_old} days old, skipping...")
+                        return None
+                    
                     status = check_titan_criteria(df)
                     if status == "BUY":
+                        # Get current price from the LAST row (most recent data)
+                        # Ensure we're using the actual last close price
+                        last_idx = len(df) - 1
+                        last_close = float(df['Close'].iloc[last_idx])
+                        
+                        # Validate price is reasonable (not 0, not negative, not NaN)
+                        if pd.isna(last_close) or last_close <= 0:
+                            print(f"⚠️ {stock}: Invalid price {last_close}, skipping...")
+                            return None
+                        
+                        current_price = round(last_close, 2)
+                        rsi_val = round(float(df['RSI'].iloc[last_idx]), 1) if not pd.isna(df['RSI'].iloc[last_idx]) else 0
+                        volume_x = round(float(df['Volume'].iloc[last_idx] / (df['Vol_SMA'].iloc[last_idx] + 1)), 1) if not pd.isna(df['Vol_SMA'].iloc[last_idx]) else 0
+                        
+                        # Debug: Log price for each stock
+                        print(f"\n📊 SCAN DEBUG for {stock}:")
+                        print(f"  DataFrame length: {len(df)}")
+                        print(f"  Last index date: {df.index[last_idx]} ({(today - last_date).days} days ago)")
+                        print(f"  Current Price: ₹{current_price}")
+                        print(f"  RSI: {rsi_val}")
+                        print(f"  Volume X: {volume_x}")
+                        
                         print(f"✅ {stock} passed criteria!")
                         chart_df = df.tail(2000).reset_index()
                         print(f"📊 Chart data for {stock}: {len(chart_df)} days | Range: {chart_df['Date'].iloc[0].strftime('%Y-%m-%d')} to {chart_df['Date'].iloc[-1].strftime('%Y-%m-%d')}")
@@ -564,21 +563,31 @@ def bulk_scan():
                             for _, row in chart_df.iterrows()
                         ]
                         
-                        sr_levels = calculate_sr_levels(df)
+                        # Calculate supply/demand zones and market structure
+                        zones = calculate_supply_demand_zones(df)
+                        structure = analyze_market_structure(df)
                         has_tradingview = stock.endswith(".NS") or stock.endswith(".BO")
                         
-                        return {
+                        result = {
                             "symbol": stock,
-                            "current_price": round(df['Close'].iloc[-1], 2),
-                            "rsi": round(df['RSI'].iloc[-1], 1),
-                            "volume_x": round(df['Volume'].iloc[-1] / (df['Vol_SMA'].iloc[-1] + 1), 1),
+                            "current_price": current_price,
+                            "rsi": rsi_val,
+                            "volume_x": volume_x,
                             "status": "💎 BUY",
                             "chart_data": chart_data,
-                            "sr_levels": sr_levels,
+                            "zones": zones,
+                            "structure": structure,
                             "has_tradingview": has_tradingview
                         }
+                        
+                        # Debug: Log the result being returned
+                        print(f"  ✅ Returning result for {stock} with price: ₹{result['current_price']}")
+                        
+                        return result
             except Exception as e:
-                print(f"⚠️ Scan error for {stock}: {str(e)[:100]}")
+                print(f"⚠️ Scan error for {stock}: {str(e)[:200]}")
+                import traceback
+                traceback.print_exc()
                 pass
             return None
 
@@ -616,10 +625,56 @@ def bulk_scan_stream():
 
             def scan_single(stock):
                 try:
-                    df = fetch_stock_data(stock)
-                    if df is not None:
+                    # CRITICAL: Create a fresh copy of the symbol to avoid any variable sharing issues
+                    stock_symbol = str(stock)  # Ensure we have a fresh string
+                    
+                    # Use same interval as chart endpoint to ensure consistency
+                    df = fetch_stock_data(stock_symbol, interval="1d")
+                    if df is not None and len(df) > 0:
+                        # CRITICAL: Create a copy of the dataframe to avoid any sharing issues
+                        df = df.copy()
+                        
+                        # Validate that we have recent data (within last 7 days)
+                        last_date = pd.to_datetime(df.index[-1])
+                        today = pd.Timestamp.now().normalize()
+                        days_old = (today - last_date).days
+                        
+                        if days_old > 7:
+                            print(f"⚠️ {stock_symbol}: Data is {days_old} days old, skipping...")
+                            return None
+                        
+                        # Validate the symbol matches what we requested
+                        # Get a sample of the data to verify it's for the right stock
+                        sample_close = float(df['Close'].iloc[-1])
+                        
                         status = check_titan_criteria(df)
                         if status == "BUY":
+                            # Get current price from the LAST row (most recent data)
+                            # Ensure we're using the actual last close price
+                            last_idx = len(df) - 1
+                            last_close = float(df['Close'].iloc[last_idx])
+                            
+                            # Validate price is reasonable (not 0, not negative, not NaN)
+                            if pd.isna(last_close) or last_close <= 0:
+                                print(f"⚠️ {stock_symbol}: Invalid price {last_close}, skipping...")
+                                return None
+                            
+                            current_price = round(last_close, 2)
+                            rsi_val = round(float(df['RSI'].iloc[last_idx]), 1) if not pd.isna(df['RSI'].iloc[last_idx]) else 0
+                            volume_x = round(float(df['Volume'].iloc[last_idx] / (df['Vol_SMA'].iloc[last_idx] + 1)), 1) if not pd.isna(df['Vol_SMA'].iloc[last_idx]) else 0
+                            
+                            # Debug: Log price for each stock with more details
+                            print(f"\n📊 SCAN DEBUG for {stock_symbol}:")
+                            print(f"  Symbol verified: {stock_symbol}")
+                            print(f"  DataFrame length: {len(df)}")
+                            print(f"  Last index date: {df.index[last_idx]} ({(today - last_date).days} days ago)")
+                            print(f"  Last Close (raw): ₹{last_close}")
+                            print(f"  Current Price (rounded): ₹{current_price}")
+                            print(f"  RSI: {rsi_val}")
+                            print(f"  Volume X: {volume_x}")
+                            print(f"  First Close: ₹{df['Close'].iloc[0]}")
+                            print(f"  Price Range: ₹{df['Close'].min():.2f} - ₹{df['Close'].max():.2f}")
+                            
                             chart_df = df.tail(2000).reset_index()
                             chart_data = [
                                 {"time": row['Date'].strftime('%Y-%m-%d'), 
@@ -627,20 +682,32 @@ def bulk_scan_stream():
                                  "low": row['Low'], "close": row['Close']}
                                 for _, row in chart_df.iterrows()
                             ]
-                            sr_levels = calculate_sr_levels(df)
-                            has_tradingview = stock.endswith(".NS") or stock.endswith(".BO")
+                            # Calculate supply/demand zones and market structure
+                            zones = calculate_supply_demand_zones(df)
+                            structure = analyze_market_structure(df)
+                            has_tradingview = stock_symbol.endswith(".NS") or stock_symbol.endswith(".BO")
                             
-                            return {
-                                "symbol": stock,
-                                "current_price": round(df['Close'].iloc[-1], 2),
-                                "rsi": round(df['RSI'].iloc[-1], 1),
-                                "volume_x": round(df['Volume'].iloc[-1] / (df['Vol_SMA'].iloc[-1] + 1), 1),
+                            result = {
+                                "symbol": stock_symbol,  # Use the verified symbol
+                                "current_price": current_price,
+                                "rsi": rsi_val,
+                                "volume_x": volume_x,
                                 "status": "💎 BUY",
                                 "chart_data": chart_data,
-                                "sr_levels": sr_levels,
+                                "zones": zones,
+                                "structure": structure,
                                 "has_tradingview": has_tradingview
                             }
+                            
+                            # Debug: Log the result being returned with symbol verification
+                            print(f"  ✅ Returning result for {stock_symbol} with price: ₹{result['current_price']}")
+                            print(f"  ✅ Result symbol: {result['symbol']}")
+                            
+                            return result
                 except Exception as e:
+                    print(f"⚠️ Scan error for {stock}: {str(e)[:200]}")
+                    import traceback
+                    traceback.print_exc()
                     pass
                 return None
 
@@ -716,7 +783,35 @@ def chat_with_stock(request: ChatRequest):
         if ema50 is not None:
             trend = "Bullish" if current_price > ema50 else "Bearish"
         
-        # Construct prompt
+        # Calculate supply/demand zones and market structure for context
+        zones = calculate_supply_demand_zones(df)
+        structure = analyze_market_structure(df)
+        
+        # Format zones for prompt
+        zones_text = ""
+        if zones and len(zones) > 0:
+            zones_list = []
+            for zone in zones:
+                zone_type = "RESISTANCE" if zone.get('type', '').upper() == 'RESISTANCE' else "SUPPORT"
+                strength = zone.get('strength', 0)
+                bottom = zone.get('bottom', 0)
+                top = zone.get('top', 0)
+                
+                # Determine strength label
+                if strength >= 4:
+                    strength_label = "Strong"
+                elif strength >= 3:
+                    strength_label = "Medium"
+                else:
+                    strength_label = "Weak"
+                
+                zones_list.append(f"{zone_type} at ₹{bottom:.2f}-₹{top:.2f} ({strength_label}, {strength} touches)")
+            
+            zones_text = "\n\n### SUPPLY/DEMAND ZONES:\n" + "\n".join(zones_list)
+        else:
+            zones_text = "\n\n### SUPPLY/DEMAND ZONES:\n- No significant zones detected nearby."
+        
+        # Construct prompt with all context
         data_summary = f"Current Price: ₹{current_price:.2f}"
         if rsi is not None:
             data_summary += f"\n- RSI (14): {rsi}"
@@ -727,13 +822,37 @@ def chat_with_stock(request: ChatRequest):
         if volume_spike is not None:
             data_summary += f"\n- Volume Spike: {volume_spike}x average"
         data_summary += f"\n- Trend: {trend}"
+        data_summary += f"\n- Market Structure: {structure if structure else 'Not Available'}"
         
-        prompt = f"""You are a Trading Assistant. Here is the live data for {request.symbol}:
+        # Debug logging
+        print(f"\n📊 CHAT REQUEST DEBUG:")
+        print(f"  Symbol: {request.symbol}")
+        print(f"  Question: {request.question}")
+        print(f"  Current Price: ₹{current_price:.2f}")
+        print(f"  EMA 50: ₹{ema50:.2f}" if ema50 else "  EMA 50: None")
+        print(f"  EMA 200: ₹{ema200:.2f}" if ema200 else "  EMA 200: None")
+        print(f"  Structure: {structure}")
+        print(f"  Zones found: {len(zones) if zones else 0}")
+        if zones:
+            for z in zones[:3]:
+                print(f"    - {z.get('type')}: ₹{z.get('bottom', 0):.2f}-₹{z.get('top', 0):.2f} (strength: {z.get('strength', 0)})")
+        
+        prompt = f"""You are a Trading Assistant for the Indian Stock Market (NSE). Here is the live data for {request.symbol}:
+
+### TECHNICAL DATA:
 {data_summary}
+{zones_text}
 
-User Question: {request.question}
+### USER QUESTION:
+{request.question}
 
-Answer specifically using this data. Be concise, professional, and focus on actionable insights based on the technical indicators provided."""
+### INSTRUCTIONS:
+- Answer specifically using the data provided above.
+- For support/resistance questions, refer to the SUPPLY/DEMAND ZONES listed above.
+- The current price is ₹{current_price:.2f} - use this as reference.
+- Be concise, professional, and focus on actionable insights.
+- If asked about "nearest support", identify the closest SUPPORT zone below the current price.
+- If asked about "nearest resistance", identify the closest RESISTANCE zone above the current price."""
         
         # Check if API key is configured
         gemini_api_key = os.getenv('GEMINI_API_KEY')
@@ -744,12 +863,24 @@ Answer specifically using this data. Be concise, professional, and focus on acti
         try:
             genai.configure(api_key=gemini_api_key)
             model = genai.GenerativeModel('gemini-2.0-flash')
+            
+            # Debug: Log the prompt being sent (truncated for readability)
+            print(f"\n📤 SENDING TO GEMINI (prompt length: {len(prompt)} chars):")
+            print(f"  First 500 chars: {prompt[:500]}...")
+            
             response = model.generate_content(prompt)
             
             reply = response.text.strip()
+            
+            # Debug: Log the response
+            print(f"\n📥 RECEIVED FROM GEMINI:")
+            print(f"  Response length: {len(reply)} chars")
+            print(f"  First 200 chars: {reply[:200]}...")
+            
             return {"reply": reply}
             
         except Exception as e:
+            print(f"\n❌ GEMINI ERROR: {str(e)}")
             return {"reply": f"❌ Error generating AI response: {str(e)}"}
             
     except Exception as e:
