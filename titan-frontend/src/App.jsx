@@ -624,7 +624,11 @@ export default function App() {
                       
                       {/* Chat Section */}
                       <div className="h-[calc(100vh-280px)] min-h-[400px]">
-                        <TitanChat symbol={selectedStock.symbol} />
+                        <TitanChat 
+                          symbol={selectedStock.symbol} 
+                          zones={selectedStock.zones || []}
+                          structure={selectedStock.structure || ""}
+                        />
                       </div>
                     </>
                   ) : (
